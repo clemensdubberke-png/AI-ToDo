@@ -1,12 +1,13 @@
 const CACHE_NAME = 'claude-chat-v1';
+const BASE = self.location.pathname.replace(/\/sw\.js$/, '');
 const APP_SHELL = [
-  '/',
-  '/index.html',
-  '/style.css',
-  '/app.js',
-  '/manifest.json',
-  '/icons/icon-192.png',
-  '/icons/icon-512.png',
+  `${BASE}/`,
+  `${BASE}/index.html`,
+  `${BASE}/style.css`,
+  `${BASE}/app.js`,
+  `${BASE}/manifest.json`,
+  `${BASE}/icons/icon-192.png`,
+  `${BASE}/icons/icon-512.png`,
 ];
 
 // Install: cache the app shell
