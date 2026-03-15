@@ -767,13 +767,39 @@ function initEventListeners() {
 
 // ── Service Worker Registration ──────────────────────────────
 function registerServiceWorker() {
-  if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-      navigator.serviceWorker.register('./sw.js')
-        .then(reg => console.log('SW registered:', reg.scope))
-        .catch(err => console.warn('SW registration failed:', err));
+  if (!('serviceWorker' in navigator)) return;
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js')
+      .then(reg => console.log('SW registered:', reg.scope))
+      .catch(err => console.warn('SW registration failed:', err));
+
+    // Listen for SW_UPDATED message → show reload banner
+    navigator.serviceWorker.addEventListener('message', (event) => {
+      if (event.data?.type === 'SW_UPDATED') showUpdateBanner();
     });
-  }
+  });
+}
+
+function showUpdateBanner() {
+  if (document.getElementById('sw-update-banner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'sw-update-banner';
+  banner.style.cssText = `
+    position:fixed;bottom:0;left:0;right:0;z-index:3000;
+    background:linear-gradient(135deg,#7c3aed,#6366f1);
+    color:#fff;padding:14px 20px;
+    display:flex;align-items:center;justify-content:space-between;
+    gap:12px;font-family:var(--font);font-size:13px;font-weight:500;
+    box-shadow:0 -4px 24px rgba(124,58,237,0.4);
+  `;
+  banner.innerHTML = `
+    <span>✨ Neue Version verfügbar – lade die App neu für das aktualisierte Design.</span>
+    <div style="display:flex;gap:8px;flex-shrink:0">
+      <button onclick="location.reload()" style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);border-radius:8px;color:#fff;padding:6px 16px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font)">Neu laden</button>
+      <button onclick="this.closest('#sw-update-banner').remove()" style="background:none;border:none;color:rgba(255,255,255,0.7);font-size:20px;cursor:pointer;padding:0 4px;line-height:1">✕</button>
+    </div>
+  `;
+  document.body.appendChild(banner);
 }
 
 // ── Init ─────────────────────────────────────────────────────

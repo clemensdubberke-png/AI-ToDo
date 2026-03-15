@@ -1,33 +1,46 @@
-const CACHE_NAME = 'claude-chat-v2';
+const CACHE_NAME = 'claude-chat-v3';
 const BASE = self.location.pathname.replace(/\/sw\.js$/, '');
 const APP_SHELL = [
   `${BASE}/`,
   `${BASE}/index.html`,
   `${BASE}/style.css`,
   `${BASE}/app.js`,
+  `${BASE}/trackers.js`,
   `${BASE}/manifest.json`,
   `${BASE}/icons/icon-192.png`,
   `${BASE}/icons/icon-512.png`,
 ];
 
-// Install: cache the app shell
+// Install: cache the app shell fresh from network (no-cache)
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL))
+    caches.open(CACHE_NAME).then((cache) =>
+      Promise.all(
+        APP_SHELL.map(url =>
+          fetch(url, { cache: 'no-store' })
+            .then(res => { if (res.ok) cache.put(url, res); })
+            .catch(() => {})
+        )
+      )
+    )
   );
   self.skipWaiting();
 });
 
-// Activate: clean up old caches
+// Activate: clean up old caches, then notify all clients to reload
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(
-        keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
+    caches.keys()
+      .then((keys) =>
+        Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
       )
-    )
+      .then(() => self.clients.claim())
+      .then(() =>
+        self.clients.matchAll({ type: 'window' }).then((clients) =>
+          clients.forEach((client) => client.postMessage({ type: 'SW_UPDATED' }))
+        )
+      )
   );
-  self.clients.claim();
 });
 
 // ── Tracker: Periodic Background Sync ──────────────────────────
