@@ -361,7 +361,9 @@ function buildMessageElement(msg) {
   el.dataset.msgId = msg.id || '';
 
   const isUser = msg.role === 'user';
-  const avatarChar = isUser ? '👤' : '✦';
+  const userAvatar = `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="white" viewBox="0 0 24 24"><path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z"/></svg>`;
+  const aiAvatar = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="white" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/></svg>`;
+  const avatarChar = isUser ? userAvatar : aiAvatar;
 
   let contentHtml = '';
   if (isUser) {
@@ -371,7 +373,7 @@ function buildMessageElement(msg) {
   }
 
   el.innerHTML = `
-    <div class="message-avatar">${avatarChar}</div>
+    <div class="message-avatar" aria-hidden="true">${avatarChar}</div>
     <div class="message-body">
       ${contentHtml}
       <span class="message-time">${msg.time || ''}</span>
@@ -462,7 +464,7 @@ function showTypingIndicator() {
   el.className = 'typing-indicator';
   el.id = 'typing-indicator';
   el.innerHTML = `
-    <div class="message-avatar" style="background:linear-gradient(135deg,#7c3aed,#4f46e5)">✦</div>
+    <div class="message-avatar" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="white" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/></svg></div>
     <div class="typing-bubble">
       <div class="typing-dot"></div>
       <div class="typing-dot"></div>
