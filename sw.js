@@ -177,32 +177,33 @@ async function swRunDueTrackers() {
   }
 }
 
-// Fetch: cache-first for app shell, network-only for API calls
+// Fetch: network-first (always fresh when online, cache fallback when offline)
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Never cache API calls to Anthropic
-  if (url.hostname === 'api.anthropic.com') {
+  // Pass through API calls and cross-origin requests
+  if (url.hostname !== self.location.hostname) {
     event.respondWith(fetch(event.request));
     return;
   }
 
-  // Cache-first for app shell assets
+  // Network-first: try network, update cache, fall back to cache offline
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) return cached;
-      return fetch(event.request).then((response) => {
+    fetch(event.request)
+      .then((response) => {
         if (response.ok) {
           const clone = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
         }
         return response;
-      }).catch(() => {
-        // Offline fallback for navigation
-        if (event.request.mode === 'navigate') {
-          return caches.match('/index.html');
-        }
-      });
-    })
+      })
+      .catch(() =>
+        caches.match(event.request).then((cached) => {
+          if (cached) return cached;
+          if (event.request.mode === 'navigate') {
+            return caches.match(`${BASE}/index.html`);
+          }
+        })
+      )
   );
 });
