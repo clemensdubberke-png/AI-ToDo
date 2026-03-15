@@ -952,7 +952,6 @@ html, body {
     transform: translateX(-100%);
   }
   .sidebar.open { transform: translateX(0); }
-  .sidebar-overlay { display: block; }
   .sidebar-overlay.visible { display: block; }
 
   .btn-menu-toggle { display: flex; }
