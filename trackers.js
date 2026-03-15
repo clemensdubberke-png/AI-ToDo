@@ -582,3 +582,6 @@ async function initTrackers() {
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible') checkDueTrackers();
 });
+
+// ── Bootstrap ─────────────────────────────────────────────────
+initTrackers();
