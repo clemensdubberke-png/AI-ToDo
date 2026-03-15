@@ -254,7 +254,6 @@ async function checkDueTrackers() {
     try {
       const result = await executeTracker(tracker);
       showTrackerInAppNotification(tracker, result);
-      renderTrackerList();
     } catch (err) {
       console.error(`[Tracker] Failed: ${tracker.name}`, err);
       showToastGlobal(`Tracker "${tracker.name}" fehlgeschlagen: ${err.message}`, 'error');
@@ -262,6 +261,7 @@ async function checkDueTrackers() {
       runningTrackers.delete(tracker.id);
     }
   }
+  renderTrackerList();
 }
 
 function initScheduler() {
