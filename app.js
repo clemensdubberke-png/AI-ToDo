@@ -191,6 +191,8 @@ function saveSettings() {
   updateApiWarning();
   closeSettings();
   showToast('Einstellungen gespeichert', 'success');
+  // Sync API key to IndexedDB so Service Worker (Tracker) can access it
+  if (typeof syncApiKeyToDb === 'function') syncApiKeyToDb(key);
 }
 
 function updateApiKeyStatus() {
@@ -747,8 +749,18 @@ function initEventListeners() {
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (!dom.settingsModal.classList.contains('hidden')) closeSettings();
+      if (typeof closeTrackerResultPanel === 'function') closeTrackerResultPanel();
+      if (typeof closeTrackerModal === 'function') closeTrackerModal();
     }
   });
+
+  // Tracker result overlay click to close
+  const trackerOverlay = document.getElementById('tracker-result-overlay');
+  if (trackerOverlay) {
+    trackerOverlay.addEventListener('click', () => {
+      if (typeof closeTrackerResultPanel === 'function') closeTrackerResultPanel();
+    });
+  }
 }
 
 // ── Service Worker Registration ──────────────────────────────
