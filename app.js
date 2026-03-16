@@ -499,6 +499,54 @@ async function sendMessage() {
   if (!text || state.streaming) return;
   if (!state.apiKey) { openSettings(); return; }
 
+  // ── Detect scheduling intent (e.g. "suche täglich um 10 Uhr nach KI-News") ──
+  if (typeof window.createTrackerFromChat === 'function') {
+    const hasSearchVerb = /\b(?:suche|such|recherchiere|finde)\b/i.test(text);
+    const freqMatch = text.match(/\b(täglich|stündlich|wöchentlich)\b/i);
+    const timeMatch = text.match(/\bum\s+(\d{1,2})(?::(\d{2}))?\s*uhr\b/i);
+    const queryMatch = text.match(/\bnach\s+(.+?)(?:\s*(?:suchen?|recherchieren?))?\s*$/i);
+    if (hasSearchVerb && queryMatch && (freqMatch || timeMatch)) {
+      const freqMap = { täglich: 'daily', stündlich: 'hourly', wöchentlich: 'weekly' };
+      const freqKey = freqMatch ? (freqMap[freqMatch[1].toLowerCase()] || 'daily') : 'daily';
+      const freqLabelDE = { daily: 'täglich', hourly: 'stündlich', weekly: 'wöchentlich' }[freqKey];
+      const hour = timeMatch ? parseInt(timeMatch[1], 10) : 9;
+      const query = queryMatch[1].trim().replace(/\s*(suchen?|recherchieren?)\s*$/i, '').trim();
+
+      if (!state.activeChatId) newChat();
+      const schedChat = getActiveChat();
+      if (schedChat) {
+        const userMsg = { id: generateId(), role: 'user', content: text, time: formatTime() };
+        schedChat.messages.push(userMsg);
+        if (schedChat.messages.length === 1) updateChatTitle(schedChat, text);
+        dom.welcomeScreen.style.display = 'none';
+        dom.messagesList.appendChild(buildMessageElement(userMsg));
+        scrollToBottom();
+        dom.messageInput.value = '';
+        autoResizeTextarea();
+        updateSendButton();
+        saveChats();
+        renderChatList();
+        try {
+          const created = await window.createTrackerFromChat({ query, frequency: freqKey, hour });
+          const nextRunStr = new Date(created.nextRun).toLocaleString('de-DE', { weekday: 'long', hour: '2-digit', minute: '2-digit' });
+          const confirmMsg = {
+            id: generateId(),
+            role: 'assistant',
+            content: `✅ **Tracker erstellt!**\n\nIch werde **${freqLabelDE}** um **${String(hour).padStart(2, '0')}:00 Uhr** nach folgendem Thema suchen:\n\n> ${query}\n\n📅 **Nächste Suche:** ${nextRunStr}\n\nDas Ergebnis erscheint sobald die Suche läuft hier im Chat. Den Tracker kannst du im Seitenmenü verwalten.`,
+            time: formatTime(),
+          };
+          schedChat.messages.push(confirmMsg);
+          dom.messagesList.appendChild(buildMessageElement(confirmMsg));
+          scrollToBottom();
+          saveChats();
+        } catch (err) {
+          showApiError(`Tracker konnte nicht erstellt werden: ${err.message}`);
+        }
+        return;
+      }
+    }
+  }
+
   // Ensure there's an active chat
   if (!state.activeChatId) newChat();
   const chat = getActiveChat();
@@ -801,6 +849,25 @@ function showUpdateBanner() {
   `;
   document.body.appendChild(banner);
 }
+
+// ── Tracker Result in Chat ────────────────────────────────────
+window.addTrackerResultToChat = function(tracker, result) {
+  if (!state.activeChatId) newChat();
+  const chat = getActiveChat();
+  if (!chat) return;
+  dom.welcomeScreen.style.display = 'none';
+  const msg = {
+    id: generateId(),
+    role: 'assistant',
+    content: `**🔍 Tracker-Update: ${tracker.name}**\n\n${result.summary}`,
+    time: formatTime(),
+  };
+  chat.messages.push(msg);
+  dom.messagesList.appendChild(buildMessageElement(msg));
+  scrollToBottom();
+  saveChats();
+  renderChatList();
+};
 
 // ── Init ─────────────────────────────────────────────────────
 function init() {

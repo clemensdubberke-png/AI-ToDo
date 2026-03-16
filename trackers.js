@@ -237,7 +237,7 @@ async function executeTracker(tracker) {
 }
 
 // ── In-App Scheduler ─────────────────────────────────────────
-let schedulerInterval = null;
+let schedulerTimeout = null;
 const runningTrackers = new Set();
 
 async function checkDueTrackers() {
@@ -254,6 +254,9 @@ async function checkDueTrackers() {
     try {
       const result = await executeTracker(tracker);
       showTrackerInAppNotification(tracker, result);
+      if (typeof window.addTrackerResultToChat === 'function') {
+        window.addTrackerResultToChat(tracker, result);
+      }
     } catch (err) {
       console.error(`[Tracker] Failed: ${tracker.name}`, err);
       showToastGlobal(`Tracker "${tracker.name}" fehlgeschlagen: ${err.message}`, 'error');
@@ -264,12 +267,27 @@ async function checkDueTrackers() {
   renderTrackerList();
 }
 
+async function scheduleNextRun() {
+  if (schedulerTimeout) { clearTimeout(schedulerTimeout); schedulerTimeout = null; }
+  const trackers = await TrackerDB.getAll('trackers');
+  const now = Date.now();
+  const active = trackers.filter(t => t.enabled && t.nextRun);
+  if (active.length === 0) return;
+  const nextDue = Math.min(...active.map(t => t.nextRun));
+  const delay = Math.max(0, nextDue - now);
+  schedulerTimeout = setTimeout(async () => {
+    await checkDueTrackers();
+    scheduleNextRun();
+  }, delay + 500);
+}
+
 function initScheduler() {
-  if (schedulerInterval) clearInterval(schedulerInterval);
-  // Check every 60 seconds
-  schedulerInterval = setInterval(checkDueTrackers, 60_000);
-  // Also check on load (for missed ones while app was closed)
+  // Check immediately for missed trackers (after 3s to let DB open)
   setTimeout(checkDueTrackers, 3000);
+  // Set up precise scheduler for future runs
+  setTimeout(scheduleNextRun, 3500);
+  // Refresh countdown display every minute
+  setInterval(renderTrackerList, 60_000);
 }
 
 // ── In-App Notification Banner ───────────────────────────────
@@ -488,6 +506,7 @@ async function saveTracker() {
   await TrackerDB.put('trackers', tracker);
   closeTrackerModal();
   renderTrackerList();
+  scheduleNextRun();
   showToastGlobal(`Tracker "${name}" gespeichert`, 'success');
 
   // Ensure notifications are enabled
@@ -532,6 +551,29 @@ function listenForSwMessages() {
     }
   });
 }
+
+// ── Chat-based Tracker Creation ───────────────────────────────
+window.createTrackerFromChat = async function({ query, frequency, hour }) {
+  const tracker = {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+    name: query.length > 40 ? query.slice(0, 37) + '…' : query,
+    query,
+    icon: '🔍',
+    schedule: { frequency: frequency || 'daily', hour: hour || 9, minute: 0 },
+    enabled: true,
+    createdAt: Date.now(),
+    lastRun: null,
+    nextRun: null,
+    lastSummary: null,
+  };
+  tracker.nextRun = nextRunTimestamp(tracker);
+  await TrackerDB.put('trackers', tracker);
+  renderTrackerList();
+  scheduleNextRun();
+  const perm = await requestNotificationPermission();
+  if (perm) registerPeriodicSync();
+  return tracker;
+};
 
 // ── Sync API key to IndexedDB (so SW can access it) ──────────
 async function syncApiKeyToDb(key) {
