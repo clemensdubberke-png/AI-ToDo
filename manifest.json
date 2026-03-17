@@ -2,7 +2,8 @@
   "name": "Claude AI Chat",
   "short_name": "ClaudeChat",
   "description": "A beautiful PWA chat interface powered by Claude AI",
-  "start_url": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait-primary",
   "theme_color": "#7c3aed",
@@ -28,7 +29,7 @@
       "name": "New Chat",
       "short_name": "New Chat",
       "description": "Start a new conversation",
-      "url": "/?new=1",
+      "url": "./?new=1",
       "icons": [{ "src": "icons/icon-192.png", "sizes": "192x192" }]
     }
   ]
