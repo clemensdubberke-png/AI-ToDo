@@ -1,4 +1,4 @@
-const CACHE_NAME = 'claude-chat-v3';
+const CACHE_NAME = 'claude-chat-v4';
 const BASE = self.location.pathname.replace(/\/sw\.js$/, '');
 const APP_SHELL = [
   `${BASE}/`,
@@ -189,7 +189,7 @@ self.addEventListener('fetch', (event) => {
 
   // Network-first: try network, update cache, fall back to cache offline
   event.respondWith(
-    fetch(event.request)
+    fetch(event.request, { cache: 'no-store' })
       .then((response) => {
         if (response.ok) {
           const clone = response.clone();
