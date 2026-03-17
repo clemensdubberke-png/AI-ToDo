@@ -126,11 +126,12 @@ async function executeGarrettActions(actions) {
   for (const action of actions) {
     try {
       if (action.type === 'calendar-create') {
-        await createCalendarEvent(action);
+        openCalendarQuickAdd(action);
         continue;
       }
       if (action.type === 'calendar-delete') {
-        await deleteCalendarEvent(action.eventId);
+        showToast('🗑️ Bitte Termin direkt in Google Kalender löschen', 'info');
+        window.open('https://calendar.google.com', '_blank');
         continue;
       }
       if (typeof window.createTrackerFromChat !== 'function') continue;
@@ -156,9 +157,7 @@ const LS = {
   CHATS:             'claude_chats',
   THEME:             'claude_theme',
   ACTIVE_CHAT:       'claude_active_chat',
-  GCAL_CLIENT_ID:    'google_calendar_client_id',
-  GCAL_TOKEN:        'google_calendar_token',
-  GCAL_TOKEN_EXPIRY: 'google_calendar_token_expiry',
+  GCAL_ICS_URL:      'google_calendar_ics_url',
 };
 
 // ── State ───────────────────────────────────────────────────
@@ -170,9 +169,7 @@ const state = {
   activeChatId: null,
   streaming: false,
   abortController: null,
-  googleClientId: '',
-  googleToken: null,
-  googleTokenExpiry: 0,
+  calendarIcsUrl: '',
   calendarContext: null,
 };
 
@@ -217,7 +214,7 @@ const dom = {
 
   toastContainer:   $('toast-container'),
 
-  gcalClientIdInput: $('gcal-client-id-input'),
+  gcalIcsUrlInput:   $('gcal-ics-url-input'),
   btnGcalConnect:    $('btn-gcal-connect'),
   gcalStatus:        $('gcal-status'),
 };
@@ -365,87 +362,76 @@ function updateHeaderModel() {
   dom.chatHeaderModel.textContent = state.model;
 }
 
-// ── Google Calendar ───────────────────────────────────────────
-function isCalendarConnected() {
-  return !!(state.googleToken && Date.now() < state.googleTokenExpiry);
+// ── Google Calendar (ICS + Quick-Add, kein OAuth) ─────────────
+function isCalendarConfigured() {
+  return !!state.calendarIcsUrl;
 }
 
 function initGoogleCalendar() {
-  state.googleClientId  = localStorage.getItem(LS.GCAL_CLIENT_ID) || '';
-  state.googleToken     = localStorage.getItem(LS.GCAL_TOKEN) || null;
-  state.googleTokenExpiry = parseInt(localStorage.getItem(LS.GCAL_TOKEN_EXPIRY) || '0', 10);
-}
-
-function connectGoogleCalendar() {
-  const clientId = document.getElementById('gcal-client-id-input')?.value.trim();
-  if (!clientId) { showToast('Bitte Google OAuth Client ID eingeben', 'error'); return; }
-  state.googleClientId = clientId;
-  localStorage.setItem(LS.GCAL_CLIENT_ID, clientId);
-
-  if (typeof google === 'undefined' || !google?.accounts?.oauth2) {
-    showToast('Google Identity Services nicht geladen – Seite neu laden', 'error');
-    return;
-  }
-  const tokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: clientId,
-    scope: 'https://www.googleapis.com/auth/calendar',
-    callback: (response) => {
-      if (response.error) { showToast('Verbindung fehlgeschlagen: ' + response.error, 'error'); return; }
-      state.googleToken       = response.access_token;
-      state.googleTokenExpiry = Date.now() + (response.expires_in * 1000);
-      localStorage.setItem(LS.GCAL_TOKEN,        state.googleToken);
-      localStorage.setItem(LS.GCAL_TOKEN_EXPIRY, state.googleTokenExpiry.toString());
-      updateGCalStatus();
-      showToast('Google Kalender verbunden ✅', 'success');
-    },
-  });
-  tokenClient.requestAccessToken({ prompt: 'consent' });
-}
-
-function disconnectGoogleCalendar() {
-  state.googleToken       = null;
-  state.googleTokenExpiry = 0;
-  localStorage.removeItem(LS.GCAL_TOKEN);
-  localStorage.removeItem(LS.GCAL_TOKEN_EXPIRY);
-  updateGCalStatus();
-  showToast('Google Kalender getrennt');
+  state.calendarIcsUrl = localStorage.getItem(LS.GCAL_ICS_URL) || '';
 }
 
 function updateGCalStatus() {
   const statusEl   = document.getElementById('gcal-status');
   const btnConnect = document.getElementById('btn-gcal-connect');
-  const input      = document.getElementById('gcal-client-id-input');
+  const input      = document.getElementById('gcal-ics-url-input');
   if (!statusEl) return;
-  if (input && state.googleClientId) input.value = state.googleClientId;
-  if (isCalendarConnected()) {
-    const expFmt = new Date(state.googleTokenExpiry).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-    statusEl.innerHTML = `<span class="gcal-badge connected">✅ Verbunden – Token gültig bis ${expFmt}</span>`;
-    if (btnConnect) { btnConnect.textContent = 'Trennen'; btnConnect.onclick = disconnectGoogleCalendar; }
+  if (input && state.calendarIcsUrl) input.value = state.calendarIcsUrl;
+  if (state.calendarIcsUrl) {
+    statusEl.innerHTML = `<span class="gcal-badge connected">✅ Kalender verbunden</span>`;
+    if (btnConnect) btnConnect.textContent = 'Entfernen';
   } else {
     statusEl.innerHTML = `<span class="gcal-badge disconnected">🔴 Nicht verbunden</span>`;
-    if (btnConnect) { btnConnect.textContent = 'Verbinden'; btnConnect.onclick = connectGoogleCalendar; }
+    if (btnConnect) btnConnect.textContent = 'Speichern';
   }
 }
 
-async function fetchCalendarEvents(daysAhead = 14) {
-  if (!isCalendarConnected()) return null;
+function parseICS(text) {
+  const events = [];
+  const blocks = text.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/g) || [];
+  for (const block of blocks) {
+    const get = (prop) => {
+      const m = block.match(new RegExp(`^${prop}(?:;[^:]*)?:(.+)`, 'm'));
+      return m ? m[1].replace(/\\n/g, '\n').replace(/\\,/g, ',').trim() : '';
+    };
+    const parseICSDate = (str) => {
+      if (!str) return null;
+      const s = str.replace('Z', '');
+      const iso = s.length >= 15
+        ? s.replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/, '$1-$2-$3T$4:$5:$6')
+        : s.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
+      return new Date(iso);
+    };
+    const startDate = parseICSDate(get('DTSTART'));
+    const endDate   = parseICSDate(get('DTEND'));
+    if (!startDate || isNaN(startDate)) continue;
+    if (endDate && !isNaN(endDate) && endDate < new Date()) continue; // skip past events
+    events.push({
+      id:          get('UID') || String(Math.random()),
+      summary:     get('SUMMARY') || '(kein Titel)',
+      start:       { dateTime: startDate.toISOString() },
+      end:         { dateTime: (endDate && !isNaN(endDate) ? endDate : startDate).toISOString() },
+      description: get('DESCRIPTION'),
+      location:    get('LOCATION'),
+    });
+  }
+  return events.sort((a, b) => new Date(a.start.dateTime) - new Date(b.start.dateTime));
+}
+
+async function fetchCalendarICS() {
+  if (!state.calendarIcsUrl) return null;
+  // Direkt versuchen
   try {
-    const timeMin = new Date().toISOString();
-    const timeMax = new Date(Date.now() + daysAhead * 86400000).toISOString();
-    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events`
-      + `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`
-      + `&orderBy=startTime&singleEvents=true&maxResults=50`;
-    const res = await fetch(url, { headers: { Authorization: `Bearer ${state.googleToken}` } });
-    if (res.status === 401) {
-      state.googleToken = null; state.googleTokenExpiry = 0;
-      localStorage.removeItem(LS.GCAL_TOKEN);
-      updateGCalStatus();
-      return null;
-    }
-    if (!res.ok) return null;
-    const data = await res.json();
-    return data.items || [];
-  } catch { return null; }
+    const res = await fetch(state.calendarIcsUrl);
+    if (res.ok) return parseICS(await res.text());
+  } catch { /* CORS-Fehler → Fallback */ }
+  // CORS-Proxy Fallback
+  try {
+    const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(state.calendarIcsUrl)}`;
+    const res = await fetch(proxyUrl);
+    if (res.ok) return parseICS(await res.text());
+  } catch { /* ignore */ }
+  return null;
 }
 
 function formatCalendarForPrompt(events) {
@@ -463,48 +449,20 @@ function formatCalendarForPrompt(events) {
       : '';
     const loc  = e.location    ? ` 📍${e.location.slice(0, 40)}`      : '';
     const desc = e.description ? ` – ${e.description.slice(0, 80)}`   : '';
-    lines.push(`- [${e.id}] ${startFmt}–${endFmt}: **${e.summary || '(kein Titel)'}**${loc}${desc}`);
+    lines.push(`- [${e.id}] ${startFmt}–${endFmt}: **${e.summary}**${loc}${desc}`);
   });
   return lines.join('\n');
 }
 
-async function createCalendarEvent(action) {
-  if (!isCalendarConnected()) { showToast('Google Kalender nicht verbunden', 'error'); return; }
-  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const event = {
-    summary: action.summary || 'Neuer Termin',
-    start: { dateTime: action.start.length === 16 ? action.start + ':00' : action.start, timeZone: tz },
-    end:   { dateTime: action.end.length   === 16 ? action.end   + ':00' : action.end,   timeZone: tz },
-  };
-  if (action.description) event.description = action.description;
-  try {
-    const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${state.googleToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(event),
-    });
-    if (res.ok) {
-      showToast(`📅 "${action.summary}" eingetragen`, 'success');
-    } else {
-      const err = await res.json().catch(() => ({}));
-      showToast('Kalender-Fehler: ' + (err.error?.message || res.status), 'error');
-    }
-  } catch (e) { showToast('Kalender-Fehler: ' + e.message, 'error'); }
-}
-
-async function deleteCalendarEvent(eventId) {
-  if (!isCalendarConnected()) { showToast('Google Kalender nicht verbunden', 'error'); return; }
-  try {
-    const res = await fetch(
-      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
-      { method: 'DELETE', headers: { Authorization: `Bearer ${state.googleToken}` } }
-    );
-    if (res.ok || res.status === 204) {
-      showToast('🗑️ Termin gelöscht', 'success');
-    } else {
-      showToast('Löschen fehlgeschlagen: ' + res.status, 'error');
-    }
-  } catch (e) { showToast('Kalender-Fehler: ' + e.message, 'error'); }
+// Öffnet einen vorausgefüllten Termin in Google Kalender (neuer Tab)
+function openCalendarQuickAdd(action) {
+  const toGCalDate = (dt) => (dt || '').replace(/[-:]/g, '').slice(0, 13).padEnd(15, '0');
+  const url = `https://calendar.google.com/calendar/render?action=TEMPLATE`
+    + `&text=${encodeURIComponent(action.summary || 'Neuer Termin')}`
+    + `&dates=${toGCalDate(action.start)}/${toGCalDate(action.end)}`
+    + (action.description ? `&details=${encodeURIComponent(action.description)}` : '');
+  window.open(url, '_blank');
+  showToast('📅 Google Kalender geöffnet – bitte Termin bestätigen', 'success');
 }
 
 // ── Chat Storage ─────────────────────────────────────────────
@@ -931,8 +889,8 @@ async function sendMessage() {
 
   // Fetch Google Calendar context if connected
   state.calendarContext = null;
-  if (isCalendarConnected()) {
-    const events = await fetchCalendarEvents(14);
+  if (isCalendarConfigured()) {
+    const events = await fetchCalendarICS();
     if (events) state.calendarContext = formatCalendarForPrompt(events);
   }
 
@@ -1127,10 +1085,24 @@ function initEventListeners() {
   dom.btnCancelSettings.addEventListener('click', closeSettings);
   dom.btnSaveSettings.addEventListener('click', saveSettings);
 
-  // Google Calendar connect button
+  // Google Calendar – ICS-URL speichern / entfernen
   if (dom.btnGcalConnect) dom.btnGcalConnect.addEventListener('click', () => {
-    if (isCalendarConnected()) disconnectGoogleCalendar();
-    else connectGoogleCalendar();
+    if (state.calendarIcsUrl) {
+      state.calendarIcsUrl = '';
+      localStorage.removeItem(LS.GCAL_ICS_URL);
+      updateGCalStatus();
+      showToast('Kalender-URL entfernt');
+    } else {
+      const url = document.getElementById('gcal-ics-url-input')?.value.trim();
+      if (!url || !url.includes('calendar.google.com')) {
+        showToast('Bitte eine gültige Google Kalender iCal-URL eingeben', 'error');
+        return;
+      }
+      state.calendarIcsUrl = url;
+      localStorage.setItem(LS.GCAL_ICS_URL, url);
+      updateGCalStatus();
+      showToast('Kalender verbunden ✅', 'success');
+    }
   });
 
   // Close modal on overlay click

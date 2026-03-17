@@ -31,9 +31,6 @@
   <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
 
   <link rel="stylesheet" href="style.css" />
-
-  <!-- Google Identity Services (für Kalender-OAuth) -->
-  <script src="https://accounts.google.com/gsi/client" async></script>
 </head>
 <body>
   <div id="app">
@@ -286,26 +283,27 @@
 
         <!-- Google Calendar -->
         <div class="form-group">
-          <label class="form-label" for="gcal-client-id-input">
+          <label class="form-label" for="gcal-ics-url-input">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
             </svg>
             Google Kalender
           </label>
           <input
-            type="text"
+            type="url"
             class="form-input"
-            id="gcal-client-id-input"
-            placeholder="OAuth 2.0 Client ID (xxxxxx.apps.googleusercontent.com)"
+            id="gcal-ics-url-input"
+            placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
             autocomplete="off"
             spellcheck="false"
           />
           <div id="gcal-status"></div>
-          <button class="btn-secondary gcal-connect-btn" id="btn-gcal-connect" type="button">Verbinden</button>
+          <button class="btn-secondary gcal-connect-btn" id="btn-gcal-connect" type="button">Speichern</button>
           <span class="form-hint">
-            Erstelle eine <strong>OAuth 2.0 Client ID</strong> (Typ: Webanwendung) in der
-            <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener" style="color:var(--text-link)">Google Cloud Console →</a>
-            Aktiviere die Google Calendar API und trage deine App-URL als autorisierte Weiterleitungs-URI ein.
+            <strong>Einrichtung (einmalig):</strong> Google Kalender öffnen →
+            <a href="https://calendar.google.com/calendar/r/settings" target="_blank" rel="noopener" style="color:var(--text-link)">Einstellungen →</a>
+            deinen Kalender wählen → ganz unten <em>„Geheime Adresse im iCal-Format"</em> → URL kopieren → hier einfügen → Speichern.
+            Zum Erstellen von Terminen öffnet Garrett Google Kalender automatisch im neuen Tab.
           </span>
         </div>
       </div>
