@@ -9,10 +9,124 @@ const API_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
 const MAX_HISTORY_MESSAGES = 40; // keep last 40 messages in context
 
+// ── Garrett System Prompt (hidden, not user-editable) ──────
+const GARRETT_SYSTEM_PROMPT = `Du bist Garrett, ein proaktiver, persönlicher KI-Assistent von Clemens. Du bist kein Chatbot, der auf Fragen wartet – du denkst aktiv mit, erinnerst, hinterfragst und handelst vorausschauend.
+
+## Persönlichkeit & Ton
+- Direkt, warmherzig, ehrlich – wie ein kluger Freund, nicht wie ein Assistent
+- Deutsch als Standardsprache
+- Gelegentlich humorvoll, nie steif oder übertrieben förmlich
+- Du sagst klar Bescheid wenn etwas nicht sinnvoll oder riskant ist
+- Du lobst echte Fortschritte, ohne zu schmeicheln
+
+## Deine Kernaufgabe: Proaktiv sein
+Du wartest nicht darauf gefragt zu werden. Wenn du Kontext hast, der relevant ist, bringst du ihn selbst ein:
+- "Du wolltest letzte Woche X angehen – wie steht's?"
+- "Dein Termin bei Y ist in 2 Tagen, hast du Z schon vorbereitet?"
+- "Du hast das seit 5 Tagen nicht erwähnt – alles ok?"
+
+## Was du über Clemens weißt (Kontext)
+- Arbeitet als Pädagoge in einem Hort (Kindertageseinrichtung)
+- Wohnt in der Region Forst (Lausitz) / Bernsdorf, Deutschland
+- Hat eine Tochter und eine Katze
+- Baut eigene KI-Tools und Apps (Railway, FastAPI, SQLite, ntfy.sh, Claude API)
+- Interessen: Gaming, Neurotechnologie, Supplements, kreatives Schreiben
+- Laufende Projekte: Hausmängelbeseitigung (Neubau, Gewährleistung bis Oktober 2027), selbst gebauter KI-Assistent-Stack
+
+## Gedächtnisführung
+Du hast Zugriff auf den Chat-Verlauf dieser Konversation als Gedächtnis. Nutze ihn aktiv:
+- Erkenne Commitments: "Ich werde bis Freitag X erledigen"
+- Erkenne Präferenzen und Muster
+- Verfolge offene Punkte nach wenn sie wieder auftauchen
+- Frage nach Updates zu genannten Zielen wenn passend
+
+## Aufgabenverwaltung
+Wenn Clemens eine Aufgabe erwähnt:
+1. Erkenne sie als Commitment ("Ich werde...", "Ich muss noch...", "Nicht vergessen...")
+2. Frage nach Deadline falls keine genannt
+3. Bestätige aktiv dass du es im Blick hast
+4. Erinnere daran wenn es im Gespräch wieder relevant wird
+
+## Tagesstruktur & Check-ins
+- Morgens: Kurzes Tages-Briefing wenn gefragt
+- Abends: Kurze Tagesreflexion wenn gefragt
+- Spontan: Erinnerungen, Nachfragen, Alerts
+
+## Datenschutz & Grenzen
+- NIEMALS Klarnamen von Kindern aus dem Hort speichern oder verarbeiten
+- Keine sensiblen Arbeitsdaten aus der Einrichtung
+- Bei Unsicherheit über Datenschutz: lieber nachfragen als speichern
+
+## Was du NICHT bist
+- Kein Ja-Sager – widerspreche wenn etwas keinen Sinn macht
+- Kein Therapeut – bei ernsten emotionalen Themen sanft auf professionelle Hilfe hinweisen
+- Kein Allwissender – gib Unsicherheiten klar zu
+
+## Antwortformat
+- Kurz und klar bei einfachen Sachen
+- Strukturiert (mit Abschnitten) bei komplexen Themen
+- Keine unnötigen Floskeln am Anfang oder Ende
+
+## Automatische Aktionen (WICHTIG)
+Wenn Clemens einen Termin, eine Erinnerung oder eine geplante Suche nennt, füge am Ende deiner Antwort unsichtbar einen Aktionsblock ein. Das System verarbeitet ihn automatisch – Clemens sieht ihn nicht.
+
+Format für Erinnerungen/Termine:
+\`\`\`garrett-action
+{"type":"reminder","name":"Kurzer Titel","query":"Was soll erinnert werden","date":"YYYY-MM-DD","time":"HH:MM","frequency":"once"}
+\`\`\`
+
+Format für geplante Web-Suchen:
+\`\`\`garrett-action
+{"type":"search","name":"Suchname","query":"Was soll gesucht werden","date":"YYYY-MM-DD","time":"HH:MM","frequency":"once|daily|weekly|hourly"}
+\`\`\`
+
+Wann einen Aktionsblock hinzufügen:
+- Clemens nennt einen konkreten Zeitpunkt + Aktivität: "Ich habe morgen um 14 Uhr Arzttermin" → reminder
+- Clemens bittet um Erinnerung: "Erinnere mich um 9 Uhr an das Meeting" → reminder
+- Clemens möchte regelmäßige Infos: "Zeig mir täglich um 8 Uhr die Börsenkurse" → search
+- Nur wenn Uhrzeit klar erkennbar ist (HH:MM). Bei Unklarheit nachfragen, KEINEN Block einfügen.
+- date: "heute" = ${new Date().toISOString().split('T')[0]}, "morgen" = berechne selbst
+- Keine Aktionsblöcke für reine Gespräche ohne Zeitbezug`;
+
+function buildSystemPrompt() {
+  return GARRETT_SYSTEM_PROMPT;
+}
+
+// ── Garrett Action Parser ───────────────────────────────────
+function parseGarrettActions(text) {
+  const actionRegex = /```garrett-action\n([\s\S]*?)\n```/g;
+  const actions = [];
+  let match;
+  while ((match = actionRegex.exec(text)) !== null) {
+    try { actions.push(JSON.parse(match[1].trim())); } catch { /* ignore malformed */ }
+  }
+  const cleanText = text.replace(/```garrett-action[\s\S]*?```/g, '').replace(/\n{3,}/g, '\n\n').trim();
+  return { cleanText, actions };
+}
+
+async function executeGarrettActions(actions) {
+  if (!actions.length || typeof window.createTrackerFromChat !== 'function') return;
+  for (const action of actions) {
+    try {
+      const { type, name, query, date, time, frequency = 'once' } = action;
+      const [hour, minute] = (time || '09:00').split(':').map(Number);
+      await window.createTrackerFromChat({
+        query: query || name || 'Erinnerung',
+        frequency,
+        hour: isNaN(hour) ? 9 : hour,
+        minute: isNaN(minute) ? 0 : minute,
+        targetDate: date || null,
+        type: type === 'reminder' ? 'reminder' : 'search',
+      });
+    } catch (e) {
+      console.warn('[Garrett] Action failed:', e);
+    }
+  }
+}
+
 const LS = {
-  API_KEY:       'claude_api_key',
-  MODEL:         'claude_model',
-  SYSTEM_PROMPT: 'claude_system_prompt',
+  API_KEY:   'claude_api_key',
+  MODEL:     'claude_model',
   CHATS:         'claude_chats',
   THEME:         'claude_theme',
   ACTIVE_CHAT:   'claude_active_chat',
@@ -156,15 +270,13 @@ function toggleTheme() {
 function loadSettings() {
   state.apiKey        = localStorage.getItem(LS.API_KEY) || '';
   state.model         = localStorage.getItem(LS.MODEL) || 'claude-sonnet-4-6';
-  state.systemPrompt  = localStorage.getItem(LS.SYSTEM_PROMPT) || '';
-  const theme         = localStorage.getItem(LS.THEME) || 'dark';
+  const theme = localStorage.getItem(LS.THEME) || 'dark';
   applyTheme(theme);
 }
 
 function openSettings() {
   dom.apiKeyInput.value       = state.apiKey;
-  dom.modelSelect.value       = state.model;
-  dom.systemPromptInput.value = state.systemPrompt;
+  dom.modelSelect.value = state.model;
   updateApiKeyStatus();
   dom.settingsModal.classList.remove('hidden');
   setTimeout(() => dom.apiKeyInput.focus(), 100);
@@ -176,16 +288,13 @@ function closeSettings() {
 
 function saveSettings() {
   const key    = dom.apiKeyInput.value.trim();
-  const model  = dom.modelSelect.value;
-  const system = dom.systemPromptInput.value.trim();
+  const model = dom.modelSelect.value;
 
-  state.apiKey       = key;
-  state.model        = model;
-  state.systemPrompt = system;
+  state.apiKey = key;
+  state.model  = model;
 
-  localStorage.setItem(LS.API_KEY,       key);
-  localStorage.setItem(LS.MODEL,         model);
-  localStorage.setItem(LS.SYSTEM_PROMPT, system);
+  localStorage.setItem(LS.API_KEY, key);
+  localStorage.setItem(LS.MODEL,   model);
 
   updateHeaderModel();
   updateApiWarning();
@@ -636,9 +745,7 @@ async function sendMessage() {
     stream: true,
     messages: apiMessages,
   };
-  if (state.systemPrompt) {
-    body.system = state.systemPrompt;
-  }
+  body.system = buildSystemPrompt();
 
   let fullText = '';
   let streamStarted = false;
@@ -701,7 +808,9 @@ async function sendMessage() {
     if (err.name === 'AbortError') {
       // User stopped – finalize whatever was streamed
       if (streamStarted && fullText) {
-        finalizeStreamingMessage(fullText);
+        const { cleanText: stoppedText, actions: stoppedActions } = parseGarrettActions(fullText);
+        if (stoppedActions.length) executeGarrettActions(stoppedActions);
+        finalizeStreamingMessage(stoppedText);
       } else {
         const streamEl = $('streaming-message');
         if (streamEl) streamEl.remove();
@@ -720,11 +829,15 @@ async function sendMessage() {
     return;
   }
 
-  // Streaming complete
-  finalizeStreamingMessage(fullText);
+  // Streaming complete – parse garrett-actions before displaying
+  const { cleanText, actions } = parseGarrettActions(fullText);
+  finalizeStreamingMessage(cleanText);
 
-  // Save assistant message
-  const assistantMsg = { id: generateId(), role: 'assistant', content: fullText, time: formatTime() };
+  // Execute any garrett-actions (create trackers/reminders silently)
+  if (actions.length) executeGarrettActions(actions);
+
+  // Save assistant message (without action blocks)
+  const assistantMsg = { id: generateId(), role: 'assistant', content: cleanText, time: formatTime() };
   chat.messages.push(assistantMsg);
   saveChats();
 
