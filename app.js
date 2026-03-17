@@ -499,18 +499,45 @@ async function sendMessage() {
   if (!text || state.streaming) return;
   if (!state.apiKey) { openSettings(); return; }
 
-  // ── Detect scheduling intent (e.g. "suche täglich um 10 Uhr nach KI-News") ──
+  // ── Detect scheduling intent ─────────────────────────────────────────────────
+  // Catches patterns like:
+  //   "Schick mir heute um 17 Uhr die Nachrichten zur deutschen Politik"
+  //   "Zeig mir täglich um 8 Uhr die neuesten KI-News"
+  //   "Informiere mich morgen um 9 Uhr über Bitcoin"
+  //   "Suche täglich um 10 Uhr nach KI-Nachrichten"
+  //   "Erinnere mich um 15 Uhr an die Sportergebnisse"
   if (typeof window.createTrackerFromChat === 'function') {
-    const hasSearchVerb = /\b(?:suche|such|recherchiere|finde)\b/i.test(text);
-    const freqMatch = text.match(/\b(täglich|stündlich|wöchentlich)\b/i);
+    const TRIGGER_VERBS = /\b(schick(?:e|en)?\s+mir|zeig(?:e|en)?\s+mir|informier(?:e|en)?\s+mich|erinner(?:e|en)?\s+mich|such(?:e|en)?(?:\s+(?:bitte\s+)?nach)?|recherchier(?:e|en)?|find(?:e|en)?(?:\s+(?:bitte\s+)?nach)?)\b/i;
     const timeMatch = text.match(/\bum\s+(\d{1,2})(?::(\d{2}))?\s*uhr\b/i);
-    const queryMatch = text.match(/\bnach\s+(.+?)(?:\s*(?:suchen?|recherchieren?))?\s*$/i);
-    if (hasSearchVerb && queryMatch && (freqMatch || timeMatch)) {
+    const freqMatch = text.match(/\b(täglich|stündlich|wöchentlich)\b/i);
+    const onceDateMatch = text.match(/\b(heute|morgen)\b/i);
+
+    if (TRIGGER_VERBS.test(text) && timeMatch) {
       const freqMap = { täglich: 'daily', stündlich: 'hourly', wöchentlich: 'weekly' };
-      const freqKey = freqMatch ? (freqMap[freqMatch[1].toLowerCase()] || 'daily') : 'daily';
-      const freqLabelDE = { daily: 'täglich', hourly: 'stündlich', weekly: 'wöchentlich' }[freqKey];
-      const hour = timeMatch ? parseInt(timeMatch[1], 10) : 9;
-      const query = queryMatch[1].trim().replace(/\s*(suchen?|recherchieren?)\s*$/i, '').trim();
+      const isRecurring = !!freqMatch;
+      const frequency = isRecurring ? (freqMap[freqMatch[1].toLowerCase()] || 'daily') : 'once';
+      const freqLabelDE = { daily: 'täglich', hourly: 'stündlich', weekly: 'wöchentlich', once: 'einmalig' }[frequency];
+      const hour = parseInt(timeMatch[1], 10);
+      const minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+
+      // Calculate target date for one-time searches
+      let targetDate = null;
+      if (frequency === 'once') {
+        const d = new Date();
+        if (onceDateMatch && onceDateMatch[1].toLowerCase() === 'morgen') d.setDate(d.getDate() + 1);
+        d.setHours(0, 0, 0, 0);
+        targetDate = d.toISOString().split('T')[0]; // 'YYYY-MM-DD'
+      }
+
+      // Strip scheduling boilerplate to get a clean search query
+      let query = text
+        .replace(TRIGGER_VERBS, '')
+        .replace(/\b(heute|morgen|täglich|stündlich|wöchentlich|bitte)\b/gi, '')
+        .replace(/\bum\s+\d{1,2}(?::\d{2})?\s*uhr\b/gi, '')
+        .replace(/\b(die\s+neuesten?|aktuelle?s?|neueste?s?)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!query || query.length < 3) query = text; // fallback: use full text
 
       if (!state.activeChatId) newChat();
       const schedChat = getActiveChat();
@@ -527,12 +554,18 @@ async function sendMessage() {
         saveChats();
         renderChatList();
         try {
-          const created = await window.createTrackerFromChat({ query, frequency: freqKey, hour });
-          const nextRunStr = new Date(created.nextRun).toLocaleString('de-DE', { weekday: 'long', hour: '2-digit', minute: '2-digit' });
+          const created = await window.createTrackerFromChat({ query, frequency, hour, minute, targetDate });
+          const nextRunStr = new Date(created.nextRun).toLocaleString('de-DE', {
+            weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+          });
+          const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} Uhr`;
+          const scheduleDesc = frequency === 'once'
+            ? `${onceDateMatch ? onceDateMatch[1] : 'heute'} um **${timeStr}**`
+            : `**${freqLabelDE}** um **${timeStr}**`;
           const confirmMsg = {
             id: generateId(),
             role: 'assistant',
-            content: `✅ **Tracker erstellt!**\n\nIch werde **${freqLabelDE}** um **${String(hour).padStart(2, '0')}:00 Uhr** nach folgendem Thema suchen:\n\n> ${query}\n\n📅 **Nächste Suche:** ${nextRunStr}\n\nDas Ergebnis erscheint sobald die Suche läuft hier im Chat. Den Tracker kannst du im Seitenmenü verwalten.`,
+            content: `✅ **Geplante Suche eingerichtet!**\n\nIch werde ${scheduleDesc} folgendes Thema für dich suchen:\n\n> ${query}\n\n📅 **Ausführung:** ${nextRunStr}\n\nDas Ergebnis erscheint sobald die Suche läuft hier im Chat${frequency !== 'once' ? ' und du bekommst eine Push-Benachrichtigung' : ''}.\n\n_Hinweis: Die App muss geöffnet sein, damit die Suche automatisch startet._`,
             time: formatTime(),
           };
           schedChat.messages.push(confirmMsg);
@@ -540,7 +573,7 @@ async function sendMessage() {
           scrollToBottom();
           saveChats();
         } catch (err) {
-          showApiError(`Tracker konnte nicht erstellt werden: ${err.message}`);
+          showApiError(`Geplante Suche konnte nicht eingerichtet werden: ${err.message}`);
         }
         return;
       }

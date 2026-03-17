@@ -91,6 +91,7 @@ const FREQ_LABELS = {
   daily: 'Täglich',
   hourly: 'Stündlich',
   weekly: 'Wöchentlich',
+  once: 'Einmalig',
 };
 
 function nextRunTimestamp(tracker) {
@@ -120,6 +121,16 @@ function nextRunTimestamp(tracker) {
     const diff = (targetDay - next.getDay() + 7) % 7 || 7;
     next.setDate(next.getDate() + (next <= now ? diff : diff === 7 ? 0 : diff));
     if (next <= now) next.setDate(next.getDate() + 7);
+    return next.getTime();
+  }
+
+  if (frequency === 'once') {
+    const next = tracker.schedule.targetDate
+      ? new Date(tracker.schedule.targetDate)
+      : new Date(now);
+    next.setHours(hour || 9, minute || 0, 0, 0);
+    // if time has already passed today and no explicit date, push to tomorrow
+    if (next <= now && !tracker.schedule.targetDate) next.setDate(next.getDate() + 1);
     return next.getTime();
   }
 
@@ -229,7 +240,12 @@ async function executeTracker(tracker) {
 
   // Update tracker's last run + next run
   tracker.lastRun = Date.now();
-  tracker.nextRun = nextRunTimestamp(tracker);
+  if (tracker.schedule?.frequency === 'once') {
+    tracker.enabled = false; // one-time: disable after running
+    tracker.nextRun = null;
+  } else {
+    tracker.nextRun = nextRunTimestamp(tracker);
+  }
   tracker.lastSummary = summary.slice(0, 120) + (summary.length > 120 ? '…' : '');
   await TrackerDB.put('trackers', tracker);
 
@@ -553,13 +569,13 @@ function listenForSwMessages() {
 }
 
 // ── Chat-based Tracker Creation ───────────────────────────────
-window.createTrackerFromChat = async function({ query, frequency, hour }) {
+window.createTrackerFromChat = async function({ query, frequency, hour, minute = 0, targetDate = null }) {
   const tracker = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     name: query.length > 40 ? query.slice(0, 37) + '…' : query,
     query,
     icon: '🔍',
-    schedule: { frequency: frequency || 'daily', hour: hour || 9, minute: 0 },
+    schedule: { frequency: frequency || 'daily', hour: hour || 9, minute, targetDate },
     enabled: true,
     createdAt: Date.now(),
     lastRun: null,
