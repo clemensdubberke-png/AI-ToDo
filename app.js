@@ -507,12 +507,18 @@ async function sendMessage() {
   //   "Suche täglich um 10 Uhr nach KI-Nachrichten"
   //   "Erinnere mich um 15 Uhr an die Sportergebnisse"
   if (typeof window.createTrackerFromChat === 'function') {
-    const TRIGGER_VERBS = /\b(schick(?:e|en)?\s+mir|zeig(?:e|en)?\s+mir|informier(?:e|en)?\s+mich|erinner(?:e|en)?\s+mich|such(?:e|en)?(?:\s+(?:bitte\s+)?nach)?|recherchier(?:e|en)?|find(?:e|en)?(?:\s+(?:bitte\s+)?nach)?)\b/i;
+    // Reminder verbs: "erinnere mich um X Uhr an Y" → type=reminder (no web search)
+    const REMINDER_VERBS = /\berinner(?:e|en)?\s+mich\b/i;
+    // Search verbs: "suche/finde/schick mir/zeig mir... um X Uhr"
+    const SEARCH_VERBS = /\b(schick(?:e|en)?\s+mir|zeig(?:e|en)?\s+mir|informier(?:e|en)?\s+mich|such(?:e|en)?(?:\s+(?:bitte\s+)?nach)?|recherchier(?:e|en)?|find(?:e|en)?(?:\s+(?:bitte\s+)?nach)?)\b/i;
+    const isReminderIntent = REMINDER_VERBS.test(text);
+    const isSearchIntent = SEARCH_VERBS.test(text);
     const timeMatch = text.match(/\bum\s+(\d{1,2})(?::(\d{2}))?\s*uhr\b/i);
     const freqMatch = text.match(/\b(täglich|stündlich|wöchentlich)\b/i);
     const onceDateMatch = text.match(/\b(heute|morgen)\b/i);
 
-    if (TRIGGER_VERBS.test(text) && timeMatch) {
+    if ((isReminderIntent || isSearchIntent) && timeMatch) {
+      const trackerType = isReminderIntent ? 'reminder' : 'search';
       const freqMap = { täglich: 'daily', stündlich: 'hourly', wöchentlich: 'weekly' };
       const isRecurring = !!freqMatch;
       const frequency = isRecurring ? (freqMap[freqMatch[1].toLowerCase()] || 'daily') : 'once';
@@ -520,24 +526,26 @@ async function sendMessage() {
       const hour = parseInt(timeMatch[1], 10);
       const minute = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
 
-      // Calculate target date for one-time searches
+      // Target date for one-time events
       let targetDate = null;
       if (frequency === 'once') {
         const d = new Date();
         if (onceDateMatch && onceDateMatch[1].toLowerCase() === 'morgen') d.setDate(d.getDate() + 1);
         d.setHours(0, 0, 0, 0);
-        targetDate = d.toISOString().split('T')[0]; // 'YYYY-MM-DD'
+        targetDate = d.toISOString().split('T')[0];
       }
 
-      // Strip scheduling boilerplate to get a clean search query
+      // Extract the actual topic/reminder text by stripping scheduling boilerplate
+      const STRIP_VERBS = isReminderIntent ? REMINDER_VERBS : SEARCH_VERBS;
       let query = text
-        .replace(TRIGGER_VERBS, '')
+        .replace(STRIP_VERBS, '')
         .replace(/\b(heute|morgen|täglich|stündlich|wöchentlich|bitte)\b/gi, '')
         .replace(/\bum\s+\d{1,2}(?::\d{2})?\s*uhr\b/gi, '')
         .replace(/\b(die\s+neuesten?|aktuelle?s?|neueste?s?)\b/gi, '')
+        .replace(/^\s*(an|nach|über|zu|zur|zum)\s+/i, '') // strip leading prepositions
         .replace(/\s+/g, ' ')
         .trim();
-      if (!query || query.length < 3) query = text; // fallback: use full text
+      if (!query || query.length < 3) query = text;
 
       if (!state.activeChatId) newChat();
       const schedChat = getActiveChat();
@@ -554,18 +562,22 @@ async function sendMessage() {
         saveChats();
         renderChatList();
         try {
-          const created = await window.createTrackerFromChat({ query, frequency, hour, minute, targetDate });
-          const nextRunStr = new Date(created.nextRun).toLocaleString('de-DE', {
+          const created = await window.createTrackerFromChat({ query, frequency, hour, minute, targetDate, type: trackerType });
+          const nextRunDate = new Date(created.nextRun);
+          const nextRunStr = nextRunDate.toLocaleString('de-DE', {
             weekday: 'long', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
           });
           const timeStr = `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')} Uhr`;
-          const scheduleDesc = frequency === 'once'
-            ? `${onceDateMatch ? onceDateMatch[1] : 'heute'} um **${timeStr}**`
+          const whenDesc = frequency === 'once'
+            ? (onceDateMatch ? onceDateMatch[1] : (nextRunDate.toDateString() === new Date().toDateString() ? 'heute' : 'morgen')) + ` um **${timeStr}**`
             : `**${freqLabelDE}** um **${timeStr}**`;
+
           const confirmMsg = {
             id: generateId(),
             role: 'assistant',
-            content: `✅ **Geplante Suche eingerichtet!**\n\nIch werde ${scheduleDesc} folgendes Thema für dich suchen:\n\n> ${query}\n\n📅 **Ausführung:** ${nextRunStr}\n\nDas Ergebnis erscheint sobald die Suche läuft hier im Chat${frequency !== 'once' ? ' und du bekommst eine Push-Benachrichtigung' : ''}.\n\n_Hinweis: Die App muss geöffnet sein, damit die Suche automatisch startet._`,
+            content: trackerType === 'reminder'
+              ? `⏰ **Erinnerung gesetzt!**\n\nIch erinnere dich ${whenDesc} an:\n\n> ${query}\n\n📅 **Zeitpunkt:** ${nextRunStr}\n\nDu bekommst eine Push-Benachrichtigung und die Erinnerung erscheint hier im Chat.\n\n_Die App muss zu diesem Zeitpunkt geöffnet sein._`
+              : `✅ **Geplante Suche eingerichtet!**\n\nIch suche ${whenDesc} nach:\n\n> ${query}\n\n📅 **Ausführung:** ${nextRunStr}\n\nDas Ergebnis erscheint dann hier im Chat und du bekommst eine Push-Benachrichtigung.\n\n_Die App muss zu diesem Zeitpunkt geöffnet sein._`,
             time: formatTime(),
           };
           schedChat.messages.push(confirmMsg);
@@ -573,7 +585,7 @@ async function sendMessage() {
           scrollToBottom();
           saveChats();
         } catch (err) {
-          showApiError(`Geplante Suche konnte nicht eingerichtet werden: ${err.message}`);
+          showApiError(`Konnte nicht eingerichtet werden: ${err.message}`);
         }
         return;
       }
@@ -889,10 +901,13 @@ window.addTrackerResultToChat = function(tracker, result) {
   const chat = getActiveChat();
   if (!chat) return;
   dom.welcomeScreen.style.display = 'none';
+  const isReminder = tracker.type === 'reminder';
   const msg = {
     id: generateId(),
     role: 'assistant',
-    content: `**🔍 Tracker-Update: ${tracker.name}**\n\n${result.summary}`,
+    content: isReminder
+      ? `⏰ **Erinnerung: ${tracker.name}**\n\n${result.summary}`
+      : `**🔍 Nachrichten-Update: ${tracker.name}**\n\n${result.summary}`,
     time: formatTime(),
   };
   chat.messages.push(msg);

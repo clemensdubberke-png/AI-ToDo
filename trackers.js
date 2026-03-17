@@ -129,8 +129,8 @@ function nextRunTimestamp(tracker) {
       ? new Date(tracker.schedule.targetDate)
       : new Date(now);
     next.setHours(hour || 9, minute || 0, 0, 0);
-    // if time has already passed today and no explicit date, push to tomorrow
-    if (next <= now && !tracker.schedule.targetDate) next.setDate(next.getDate() + 1);
+    // If the scheduled time has already passed, push to tomorrow
+    if (next.getTime() <= Date.now()) next.setDate(next.getDate() + 1);
     return next.getTime();
   }
 
@@ -222,12 +222,16 @@ Schreibe am Ende 2-3 Quellen als Links.`;
 
 // ── Run a Single Tracker ─────────────────────────────────────
 async function executeTracker(tracker) {
-  const apiKey = localStorage.getItem('claude_api_key') || await TrackerDB.getKv('apiKey');
-  const model  = localStorage.getItem('claude_model') || 'claude-sonnet-4-6';
-
-  if (!apiKey) throw new Error('Kein API-Key konfiguriert');
-
-  const summary = await runTrackerSearch(tracker, apiKey, model);
+  let summary;
+  if (tracker.type === 'reminder') {
+    // Reminders: no API call, just return the reminder text
+    summary = tracker.query;
+  } else {
+    const apiKey = localStorage.getItem('claude_api_key') || await TrackerDB.getKv('apiKey');
+    const model  = localStorage.getItem('claude_model') || 'claude-sonnet-4-6';
+    if (!apiKey) throw new Error('Kein API-Key konfiguriert');
+    summary = await runTrackerSearch(tracker, apiKey, model);
+  }
 
   const result = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
@@ -308,16 +312,21 @@ function initScheduler() {
 
 // ── In-App Notification Banner ───────────────────────────────
 function showTrackerInAppNotification(tracker, result) {
+  const icon = tracker.type === 'reminder' ? '⏰' : '🔍';
+  const notifTitle = tracker.type === 'reminder'
+    ? `⏰ Erinnerung: ${tracker.name}`
+    : `🔍 ${tracker.name}`;
+
   // Show browser notification if permission granted
   if (Notification.permission === 'granted' && 'serviceWorker' in navigator) {
     navigator.serviceWorker.ready.then(reg => {
-      reg.showNotification(`🔍 ${tracker.name}`, {
+      reg.showNotification(notifTitle, {
         body: tracker.lastSummary,
         icon: './icons/icon-192.png',
         badge: './icons/icon-192.png',
         tag: `tracker-${tracker.id}`,
         data: { trackerId: tracker.id, resultId: result.id },
-        requireInteraction: false,
+        requireInteraction: tracker.type === 'reminder', // reminders stay until dismissed
         vibrate: [200, 100, 200],
       });
     });
@@ -327,7 +336,7 @@ function showTrackerInAppNotification(tracker, result) {
   const banner = document.createElement('div');
   banner.className = 'tracker-banner';
   banner.innerHTML = `
-    <div class="tracker-banner-icon">🔍</div>
+    <div class="tracker-banner-icon">${icon}</div>
     <div class="tracker-banner-body">
       <strong>${escapeTrackerHtml(tracker.name)}</strong>
       <span>${escapeTrackerHtml(tracker.lastSummary || '')}</span>
@@ -369,7 +378,7 @@ async function renderTrackerList() {
     const item = document.createElement('div');
     item.className = 'tracker-item' + (runningTrackers.has(t.id) ? ' running' : '');
     item.innerHTML = `
-      <div class="tracker-item-icon">${t.icon || '🔍'}</div>
+      <div class="tracker-item-icon">${t.type === 'reminder' ? '⏰' : (t.icon || '🔍')}</div>
       <div class="tracker-item-body">
         <span class="tracker-item-name">${escapeTrackerHtml(t.name)}</span>
         <span class="tracker-item-meta">${FREQ_LABELS[t.schedule?.frequency] || ''} · ${formatNextRun(t.nextRun)}</span>
@@ -569,12 +578,13 @@ function listenForSwMessages() {
 }
 
 // ── Chat-based Tracker Creation ───────────────────────────────
-window.createTrackerFromChat = async function({ query, frequency, hour, minute = 0, targetDate = null }) {
+window.createTrackerFromChat = async function({ query, frequency, hour, minute = 0, targetDate = null, type = 'search' }) {
   const tracker = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     name: query.length > 40 ? query.slice(0, 37) + '…' : query,
     query,
-    icon: '🔍',
+    type,
+    icon: type === 'reminder' ? '⏰' : '🔍',
     schedule: { frequency: frequency || 'daily', hour: hour || 9, minute, targetDate },
     enabled: true,
     createdAt: Date.now(),
