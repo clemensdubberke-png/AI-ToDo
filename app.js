@@ -77,10 +77,36 @@ Wann einen Aktionsblock hinzufügen:
 - Clemens möchte regelmäßige Infos: "Zeig mir täglich um 8 Uhr die Börsenkurse" → search
 - Nur wenn Uhrzeit klar erkennbar ist (HH:MM). Bei Unklarheit nachfragen, KEINEN Block einfügen.
 - date: "heute" = ${new Date().toISOString().split('T')[0]}, "morgen" = berechne selbst
-- Keine Aktionsblöcke für reine Gespräche ohne Zeitbezug`;
+- Keine Aktionsblöcke für reine Gespräche ohne Zeitbezug
+
+## Web-Suche
+Du hast Zugriff auf das Internet über ein Web-Such-Tool. Nutze es aktiv wenn:
+- nach aktuellen Ereignissen, Preisen, News oder zeitkritischen Daten gefragt wird
+- du dir bei Fakten unsicher bist und nachprüfen willst
+Kündige keine Suche explizit an – such einfach und antworte direkt mit den Ergebnissen.
+
+## Google Kalender
+Wenn der Kalender verbunden ist, hast du die Termine der nächsten 14 Tage als Kontext im System Prompt.
+Du kannst neue Termine erstellen oder bestehende löschen über Aktionsblöcke:
+
+Format Termin erstellen:
+\`\`\`garrett-action
+{"type":"calendar-create","summary":"Titel","start":"YYYY-MM-DDTHH:MM","end":"YYYY-MM-DDTHH:MM","description":"Optional"}
+\`\`\`
+
+Format Termin löschen (eventId aus dem Kalender-Kontext):
+\`\`\`garrett-action
+{"type":"calendar-delete","eventId":"abc123xyz"}
+\`\`\`
+
+Wann Kalender-Aktionen nutzen: nur wenn der Nutzer explizit bittet, etwas einzutragen oder zu löschen.`;
 
 function buildSystemPrompt() {
-  return GARRETT_SYSTEM_PROMPT;
+  let prompt = GARRETT_SYSTEM_PROMPT;
+  if (state.calendarContext) {
+    prompt += '\n\n' + state.calendarContext;
+  }
+  return prompt;
 }
 
 // ── Garrett Action Parser ───────────────────────────────────
@@ -96,9 +122,18 @@ function parseGarrettActions(text) {
 }
 
 async function executeGarrettActions(actions) {
-  if (!actions.length || typeof window.createTrackerFromChat !== 'function') return;
+  if (!actions.length) return;
   for (const action of actions) {
     try {
+      if (action.type === 'calendar-create') {
+        await createCalendarEvent(action);
+        continue;
+      }
+      if (action.type === 'calendar-delete') {
+        await deleteCalendarEvent(action.eventId);
+        continue;
+      }
+      if (typeof window.createTrackerFromChat !== 'function') continue;
       const { type, name, query, date, time, frequency = 'once' } = action;
       const [hour, minute] = (time || '09:00').split(':').map(Number);
       await window.createTrackerFromChat({
@@ -116,11 +151,14 @@ async function executeGarrettActions(actions) {
 }
 
 const LS = {
-  API_KEY:   'claude_api_key',
-  MODEL:     'claude_model',
-  CHATS:         'claude_chats',
-  THEME:         'claude_theme',
-  ACTIVE_CHAT:   'claude_active_chat',
+  API_KEY:           'claude_api_key',
+  MODEL:             'claude_model',
+  CHATS:             'claude_chats',
+  THEME:             'claude_theme',
+  ACTIVE_CHAT:       'claude_active_chat',
+  GCAL_CLIENT_ID:    'google_calendar_client_id',
+  GCAL_TOKEN:        'google_calendar_token',
+  GCAL_TOKEN_EXPIRY: 'google_calendar_token_expiry',
 };
 
 // ── State ───────────────────────────────────────────────────
@@ -132,6 +170,10 @@ const state = {
   activeChatId: null,
   streaming: false,
   abortController: null,
+  googleClientId: '',
+  googleToken: null,
+  googleTokenExpiry: 0,
+  calendarContext: null,
 };
 
 // ── DOM References ──────────────────────────────────────────
@@ -174,6 +216,10 @@ const dom = {
   btnSaveSettings:  $('btn-save-settings'),
 
   toastContainer:   $('toast-container'),
+
+  gcalClientIdInput: $('gcal-client-id-input'),
+  btnGcalConnect:    $('btn-gcal-connect'),
+  gcalStatus:        $('gcal-status'),
 };
 
 // ── Configure marked.js ─────────────────────────────────────
@@ -263,12 +309,14 @@ function loadSettings() {
   state.model         = localStorage.getItem(LS.MODEL) || 'claude-sonnet-4-6';
   const theme = localStorage.getItem(LS.THEME) || 'dark';
   applyTheme(theme);
+  initGoogleCalendar();
 }
 
 function openSettings() {
   dom.apiKeyInput.value       = state.apiKey;
   dom.modelSelect.value = state.model;
   updateApiKeyStatus();
+  updateGCalStatus();
   dom.settingsModal.classList.remove('hidden');
   setTimeout(() => dom.apiKeyInput.focus(), 100);
 }
@@ -315,6 +363,148 @@ function updateApiWarning() {
 
 function updateHeaderModel() {
   dom.chatHeaderModel.textContent = state.model;
+}
+
+// ── Google Calendar ───────────────────────────────────────────
+function isCalendarConnected() {
+  return !!(state.googleToken && Date.now() < state.googleTokenExpiry);
+}
+
+function initGoogleCalendar() {
+  state.googleClientId  = localStorage.getItem(LS.GCAL_CLIENT_ID) || '';
+  state.googleToken     = localStorage.getItem(LS.GCAL_TOKEN) || null;
+  state.googleTokenExpiry = parseInt(localStorage.getItem(LS.GCAL_TOKEN_EXPIRY) || '0', 10);
+}
+
+function connectGoogleCalendar() {
+  const clientId = document.getElementById('gcal-client-id-input')?.value.trim();
+  if (!clientId) { showToast('Bitte Google OAuth Client ID eingeben', 'error'); return; }
+  state.googleClientId = clientId;
+  localStorage.setItem(LS.GCAL_CLIENT_ID, clientId);
+
+  if (typeof google === 'undefined' || !google?.accounts?.oauth2) {
+    showToast('Google Identity Services nicht geladen – Seite neu laden', 'error');
+    return;
+  }
+  const tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: clientId,
+    scope: 'https://www.googleapis.com/auth/calendar',
+    callback: (response) => {
+      if (response.error) { showToast('Verbindung fehlgeschlagen: ' + response.error, 'error'); return; }
+      state.googleToken       = response.access_token;
+      state.googleTokenExpiry = Date.now() + (response.expires_in * 1000);
+      localStorage.setItem(LS.GCAL_TOKEN,        state.googleToken);
+      localStorage.setItem(LS.GCAL_TOKEN_EXPIRY, state.googleTokenExpiry.toString());
+      updateGCalStatus();
+      showToast('Google Kalender verbunden ✅', 'success');
+    },
+  });
+  tokenClient.requestAccessToken({ prompt: 'consent' });
+}
+
+function disconnectGoogleCalendar() {
+  state.googleToken       = null;
+  state.googleTokenExpiry = 0;
+  localStorage.removeItem(LS.GCAL_TOKEN);
+  localStorage.removeItem(LS.GCAL_TOKEN_EXPIRY);
+  updateGCalStatus();
+  showToast('Google Kalender getrennt');
+}
+
+function updateGCalStatus() {
+  const statusEl   = document.getElementById('gcal-status');
+  const btnConnect = document.getElementById('btn-gcal-connect');
+  const input      = document.getElementById('gcal-client-id-input');
+  if (!statusEl) return;
+  if (input && state.googleClientId) input.value = state.googleClientId;
+  if (isCalendarConnected()) {
+    const expFmt = new Date(state.googleTokenExpiry).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+    statusEl.innerHTML = `<span class="gcal-badge connected">✅ Verbunden – Token gültig bis ${expFmt}</span>`;
+    if (btnConnect) { btnConnect.textContent = 'Trennen'; btnConnect.onclick = disconnectGoogleCalendar; }
+  } else {
+    statusEl.innerHTML = `<span class="gcal-badge disconnected">🔴 Nicht verbunden</span>`;
+    if (btnConnect) { btnConnect.textContent = 'Verbinden'; btnConnect.onclick = connectGoogleCalendar; }
+  }
+}
+
+async function fetchCalendarEvents(daysAhead = 14) {
+  if (!isCalendarConnected()) return null;
+  try {
+    const timeMin = new Date().toISOString();
+    const timeMax = new Date(Date.now() + daysAhead * 86400000).toISOString();
+    const url = `https://www.googleapis.com/calendar/v3/calendars/primary/events`
+      + `?timeMin=${encodeURIComponent(timeMin)}&timeMax=${encodeURIComponent(timeMax)}`
+      + `&orderBy=startTime&singleEvents=true&maxResults=50`;
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${state.googleToken}` } });
+    if (res.status === 401) {
+      state.googleToken = null; state.googleTokenExpiry = 0;
+      localStorage.removeItem(LS.GCAL_TOKEN);
+      updateGCalStatus();
+      return null;
+    }
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.items || [];
+  } catch { return null; }
+}
+
+function formatCalendarForPrompt(events) {
+  if (!events || events.length === 0) return '## Dein Google Kalender (nächste 14 Tage)\nKeine Termine gefunden.';
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const lines = [`## Dein Google Kalender (nächste 14 Tage, Zeitzone: ${tz})`];
+  events.forEach(e => {
+    const startRaw = e.start?.dateTime || e.start?.date || '';
+    const endRaw   = e.end?.dateTime   || e.end?.date   || '';
+    const startFmt = startRaw
+      ? new Date(startRaw).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+      : '';
+    const endFmt = endRaw
+      ? new Date(endRaw).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+      : '';
+    const loc  = e.location    ? ` 📍${e.location.slice(0, 40)}`      : '';
+    const desc = e.description ? ` – ${e.description.slice(0, 80)}`   : '';
+    lines.push(`- [${e.id}] ${startFmt}–${endFmt}: **${e.summary || '(kein Titel)'}**${loc}${desc}`);
+  });
+  return lines.join('\n');
+}
+
+async function createCalendarEvent(action) {
+  if (!isCalendarConnected()) { showToast('Google Kalender nicht verbunden', 'error'); return; }
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const event = {
+    summary: action.summary || 'Neuer Termin',
+    start: { dateTime: action.start.length === 16 ? action.start + ':00' : action.start, timeZone: tz },
+    end:   { dateTime: action.end.length   === 16 ? action.end   + ':00' : action.end,   timeZone: tz },
+  };
+  if (action.description) event.description = action.description;
+  try {
+    const res = await fetch('https://www.googleapis.com/calendar/v3/calendars/primary/events', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${state.googleToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+    });
+    if (res.ok) {
+      showToast(`📅 "${action.summary}" eingetragen`, 'success');
+    } else {
+      const err = await res.json().catch(() => ({}));
+      showToast('Kalender-Fehler: ' + (err.error?.message || res.status), 'error');
+    }
+  } catch (e) { showToast('Kalender-Fehler: ' + e.message, 'error'); }
+}
+
+async function deleteCalendarEvent(eventId) {
+  if (!isCalendarConnected()) { showToast('Google Kalender nicht verbunden', 'error'); return; }
+  try {
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events/${encodeURIComponent(eventId)}`,
+      { method: 'DELETE', headers: { Authorization: `Bearer ${state.googleToken}` } }
+    );
+    if (res.ok || res.status === 204) {
+      showToast('🗑️ Termin gelöscht', 'success');
+    } else {
+      showToast('Löschen fehlgeschlagen: ' + res.status, 'error');
+    }
+  } catch (e) { showToast('Kalender-Fehler: ' + e.message, 'error'); }
 }
 
 // ── Chat Storage ─────────────────────────────────────────────
@@ -557,6 +747,21 @@ function finalizeStreamingMessage(text) {
   scrollToBottom();
 }
 
+// ── Web Search Indicator ─────────────────────────────────────
+function showSearchingIndicator() {
+  const bubble = $('streaming-bubble');
+  if (!bubble || bubble.querySelector('.search-indicator')) return;
+  const el = document.createElement('div');
+  el.className = 'search-indicator';
+  el.innerHTML = '🌐 Suche im Web…';
+  bubble.prepend(el);
+  scrollToBottom();
+}
+
+function hideSearchingIndicator() {
+  document.querySelector('.search-indicator')?.remove();
+}
+
 // ── Typing Indicator ─────────────────────────────────────────
 function showTypingIndicator() {
   dom.welcomeScreen.style.display = 'none';
@@ -724,6 +929,13 @@ async function sendMessage() {
 
   showTypingIndicator();
 
+  // Fetch Google Calendar context if connected
+  state.calendarContext = null;
+  if (isCalendarConnected()) {
+    const events = await fetchCalendarEvents(14);
+    if (events) state.calendarContext = formatCalendarForPrompt(events);
+  }
+
   // Build messages array for API (limit context window)
   const apiMessages = chat.messages
     .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -735,11 +947,13 @@ async function sendMessage() {
     max_tokens: 8096,
     stream: true,
     messages: apiMessages,
+    tools: [{ type: 'web_search_20250305', name: 'web_search' }],
   };
   body.system = buildSystemPrompt();
 
   let fullText = '';
   let streamStarted = false;
+  let currentBlockType = null;
 
   try {
     const response = await fetch(API_URL, {
@@ -749,6 +963,7 @@ async function sendMessage() {
         'x-api-key': state.apiKey,
         'anthropic-version': ANTHROPIC_VERSION,
         'anthropic-dangerous-direct-browser-access': 'true',
+        'anthropic-beta': 'web-search-2025-03-05',
       },
       body: JSON.stringify(body),
       signal: state.abortController.signal,
@@ -786,6 +1001,18 @@ async function sendMessage() {
 
         try {
           const event = JSON.parse(data);
+
+          // Track content block type (text vs tool_use)
+          if (event.type === 'content_block_start') {
+            currentBlockType = event.content_block?.type;
+            if (currentBlockType === 'tool_use' && event.content_block?.name === 'web_search') {
+              showSearchingIndicator();
+            } else if (currentBlockType === 'text') {
+              hideSearchingIndicator();
+            }
+          }
+
+          // Only accumulate text_delta blocks (not tool input JSON)
           if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
             fullText += event.delta.text;
             updateStreamingBubble(fullText);
@@ -793,6 +1020,7 @@ async function sendMessage() {
         } catch { /* malformed JSON, skip */ }
       }
     }
+    hideSearchingIndicator();
 
   } catch (err) {
     removeTypingIndicator();
@@ -898,6 +1126,12 @@ function initEventListeners() {
   dom.btnCloseSettings.addEventListener('click', closeSettings);
   dom.btnCancelSettings.addEventListener('click', closeSettings);
   dom.btnSaveSettings.addEventListener('click', saveSettings);
+
+  // Google Calendar connect button
+  if (dom.btnGcalConnect) dom.btnGcalConnect.addEventListener('click', () => {
+    if (isCalendarConnected()) disconnectGoogleCalendar();
+    else connectGoogleCalendar();
+  });
 
   // Close modal on overlay click
   dom.settingsModal.addEventListener('click', (e) => {

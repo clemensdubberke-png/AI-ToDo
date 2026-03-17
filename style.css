@@ -959,6 +959,42 @@ html, body {
 .api-key-status.valid { border-color: rgba(74,222,128,0.3); background: rgba(74,222,128,0.07); color: #4ade80; }
 .api-key-status.invalid { border-color: rgba(248,113,113,0.3); background: rgba(248,113,113,0.07); color: #f87171; }
 
+/* Google Calendar status */
+#gcal-status { min-height: 18px; }
+.gcal-badge {
+  display: inline-block;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 3px 10px;
+  border-radius: 20px;
+  border: 1px solid transparent;
+}
+.gcal-badge.connected {
+  color: #4ade80;
+  background: rgba(74,222,128,0.07);
+  border-color: rgba(74,222,128,0.3);
+}
+.gcal-badge.disconnected {
+  color: var(--text-muted);
+  background: rgba(255,255,255,0.03);
+  border-color: var(--border);
+}
+.gcal-connect-btn { align-self: flex-start; margin-top: 2px; }
+
+/* Web search indicator inside streaming bubble */
+.search-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 4px 10px;
+  margin-bottom: 8px;
+  background: var(--accent-light);
+  border-radius: 20px;
+  animation: pulse 1.2s infinite;
+}
+
 .modal-footer {
   padding: 16px 24px 22px;
   border-top: 1px solid var(--border);
