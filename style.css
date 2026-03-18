@@ -2142,3 +2142,70 @@ html, body {
 #sw-update-banner {
   bottom: var(--bottom-nav-height) !important;
 }
+
+/* ── Milestone list in project modal ─────────────────────── */
+.milestone-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+
+.milestone-item { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+.milestone-item.done { opacity: 0.6; }
+.milestone-item.done .milestone-name { text-decoration: line-through; color: var(--text-muted); }
+
+.milestone-header {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; cursor: pointer;
+  background: var(--surface-2);
+  user-select: none;
+}
+.milestone-header:active { opacity: 0.7; }
+
+.milestone-cb {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid var(--accent);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 11px; color: #fff;
+  background: transparent;
+  transition: background 0.2s;
+}
+.milestone-item.done .milestone-cb { background: var(--accent); }
+
+.milestone-name { font-size: 13px; font-weight: 600; flex: 1; }
+
+.subgoal-list { padding: 0 12px 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+
+.subgoal-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 8px; border-radius: 8px; cursor: pointer;
+  user-select: none;
+}
+.subgoal-item:hover { background: var(--surface-2); }
+.subgoal-item.done .subgoal-name { text-decoration: line-through; color: var(--text-muted); }
+
+.subgoal-cb {
+  width: 16px; height: 16px; border-radius: 4px;
+  border: 1.5px solid var(--border);
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0; font-size: 9px; color: #fff;
+  background: transparent; transition: background 0.15s, border-color 0.15s;
+}
+.subgoal-item.done .subgoal-cb { background: #4ade80; border-color: #4ade80; }
+
+.subgoal-name { font-size: 13px; flex: 1; }
+
+.project-progress-info { margin-bottom: 4px; }
+
+/* ── Doc view modal ─────────────────────────────────────── */
+.doc-view-modal-inner { max-height: 80dvh; display: flex; flex-direction: column; }
+.doc-view-body { overflow-y: auto; flex: 1; padding: 4px 0; line-height: 1.6; font-size: 14px; }
+
+.doc-h1  { font-size: 16px; font-weight: 700; margin: 12px 0 6px; }
+.doc-h2  { font-size: 13px; font-weight: 600; margin: 10px 0 4px; color: var(--accent); text-transform: uppercase; letter-spacing: .04em; }
+.doc-line { padding: 1px 0; }
+.doc-spacer { height: 6px; }
+.doc-bullet { padding: 2px 0; }
+.doc-check  { display: flex; gap: 8px; padding: 2px 0; padding-left: 0; align-items: flex-start; }
+.doc-check.top { font-weight: 500; }
+.doc-check { padding-left: 16px; }
+.doc-check.top { padding-left: 0; }
+.doc-check-icon { flex-shrink: 0; font-size: 13px; }
+.doc-check-icon.done { color: #4ade80; }
+.done-item span:last-child { text-decoration: line-through; color: var(--text-muted); }

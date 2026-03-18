@@ -68,10 +68,16 @@ Format für Aufgaben (Home-Screen To-do):
 {"type":"todo-add","text":"Kurze Aufgabenbeschreibung","date":"YYYY-MM-DD"}
 \`\`\`
 
-Format für Projekte (Verlauf → Projekte):
+Format für Projekte anlegen (Verlauf → Projekte + automatisches Projektdokument unter Dokumente):
 \`\`\`garrett-action
-{"type":"project-add","name":"Projektname"}
+{"type":"project-add","name":"Projektname","description":"Was das Projekt ist und bezweckt","milestones":[{"name":"Meilenstein 1","subgoals":["Teilziel A","Teilziel B"]},{"name":"Meilenstein 2","subgoals":["Teilziel C"]}]}
 \`\`\`
+
+Format für Projekt-Updates (Fortschritt eintragen, Meilensteine/Teilziele abhaken):
+\`\`\`garrett-action
+{"type":"project-update","name":"Projektname","notes":"Was sich geändert hat","completeMilestone":"Meilenstein 1","completeSubgoal":{"milestone":"Meilenstein 1","subgoal":"Teilziel A"}}
+\`\`\`
+Hinweis project-update: "completeMilestone" und "completeSubgoal" sind optional – nur angeben wenn etwas wirklich abgeschlossen ist.
 
 Format für Erinnerungen/Termine:
 \`\`\`garrett-action
@@ -88,7 +94,8 @@ Wann welchen Aktionsblock:
   Beispiele: "Ich muss heute noch die Rechnung schicken" → todo-add date=heute
              "Morgen muss ich den Arzt anrufen" → todo-add date=morgen
              "Am Freitag Präsentation vorbereiten" → todo-add date=YYYY-MM-DD
-- Clemens erwähnt ein Projekt oder möchte eines anlegen → project-add
+- Clemens erwähnt ein Projekt oder möchte eines anlegen → project-add mit Beschreibung + Meilensteinen
+- Clemens meldet Fortschritt zu einem Projekt → project-update mit notes + ggf. completeMilestone/completeSubgoal
 - Clemens bittet um Erinnerung zu einer Uhrzeit → reminder
 - Clemens möchte regelmäßige Infos → search
 - Bei Uhrzeit: Nur reminder/search wenn HH:MM klar. Bei Unklarheit nachfragen.
@@ -154,15 +161,127 @@ function buildHomeContext() {
     if (projects.length > 0) {
       lines.push('### Projekte');
       projects.forEach(p => {
-        const done = p.tasks?.filter(t => t.done).length || 0;
-        const total = p.tasks?.length || 0;
-        const open = p.tasks?.filter(t => !t.done).map(t => t.text) || [];
-        lines.push(`- **${p.name}** (${done}/${total} erledigt)${open.length ? ': ' + open.slice(0, 3).join(', ') : ''}`);
+        const pct = calculateProjectProgress(p);
+        const ms = p.milestones || [];
+        if (ms.length > 0) {
+          const openMs = ms.filter(m => !m.completed);
+          lines.push(`- **${p.name}** (${pct}% abgeschlossen, ${openMs.length}/${ms.length} Meilensteine offen)`);
+          openMs.slice(0, 2).forEach(m => {
+            const openSgs = (m.subgoals || []).filter(sg => !sg.completed);
+            lines.push(`  - Meilenstein: ${m.name}${openSgs.length ? ` → ${openSgs.map(sg => sg.name).slice(0, 2).join(', ')}` : ''}`);
+          });
+        } else {
+          const done = p.tasks?.filter(t => t.done).length || 0;
+          const total = p.tasks?.length || 0;
+          const open = p.tasks?.filter(t => !t.done).map(t => t.text) || [];
+          lines.push(`- **${p.name}** (${done}/${total} Aufgaben, ${pct}%)${open.length ? ': ' + open.slice(0, 3).join(', ') : ''}`);
+        }
       });
     }
 
     return lines.join('\n');
   } catch { return ''; }
+}
+
+// ── Project helpers ─────────────────────────────────────────
+function calculateProjectProgress(project) {
+  const ms = project.milestones;
+  if (!ms || ms.length === 0) {
+    const tasks = project.tasks || [];
+    if (tasks.length === 0) return 0;
+    return Math.round((tasks.filter(t => t.done).length / tasks.length) * 100);
+  }
+  let totalScore = 0;
+  for (const m of ms) {
+    const sgs = m.subgoals || [];
+    if (sgs.length === 0) {
+      totalScore += m.completed ? 1 : 0;
+    } else {
+      totalScore += sgs.filter(sg => sg.completed).length / sgs.length;
+    }
+  }
+  return Math.round((totalScore / ms.length) * 100);
+}
+
+function createProjectDocument(project) {
+  const today = todayISO();
+  const msLines = (project.milestones || []).map(m => {
+    const sgs = (m.subgoals || []).map(sg => `  - [ ] ${sg.name}`).join('\n');
+    return `- [ ] ${m.name}${sgs ? '\n' + sgs : ''}`;
+  }).join('\n');
+  const content = `# Projekt: ${project.name}\n\n**Erstellt:** ${today}\n**Status:** In Bearbeitung (0%)\n\n## Beschreibung\n${project.description || 'Keine Beschreibung angegeben.'}\n\n## Meilensteine & Ziele\n${msLines || '(Noch keine Meilensteine definiert)'}\n\n## Updates & Notizen\n- ${today}: Projekt erstellt`;
+  const docs = loadDocuments();
+  const doc = { id: generateId(), title: `📁 ${project.name}`, content, createdAt: new Date().toISOString(), projectId: project.id };
+  docs.unshift(doc);
+  saveDocuments(docs);
+  return doc.id;
+}
+
+function updateProjectDocument(projectId, noteText) {
+  const projects = loadProjects();
+  const project = projects.find(p => p.id === projectId);
+  if (!project || !project.documentId) return;
+  const docs = loadDocuments();
+  const doc = docs.find(d => d.id === project.documentId);
+  if (!doc) return;
+  const pct = calculateProjectProgress(project);
+  const statusLabel = pct >= 100 ? 'Abgeschlossen' : 'In Bearbeitung';
+  doc.content = doc.content.replace(/\*\*Status:\*\*[^\n]*/, `**Status:** ${statusLabel} (${pct}%)`);
+  const ms = project.milestones || [];
+  if (ms.length > 0) {
+    const msLines = ms.map(m => {
+      const allDone = m.subgoals?.length > 0 ? m.subgoals.every(sg => sg.completed) : false;
+      const msDone = m.completed || allDone;
+      const sgs = (m.subgoals || []).map(sg => `  - [${sg.completed ? 'x' : ' '}] ${sg.name}`).join('\n');
+      return `- [${msDone ? 'x' : ' '}] ${m.name}${sgs ? '\n' + sgs : ''}`;
+    }).join('\n');
+    doc.content = doc.content.replace(/(## Meilensteine & Ziele\n)([\s\S]*?)(\n## )/, `$1${msLines}\n$3`);
+  }
+  if (noteText) {
+    const today = todayISO();
+    const marker = '## Updates & Notizen\n';
+    if (doc.content.includes(marker)) {
+      doc.content = doc.content.replace(marker, `${marker}- ${today}: ${noteText}\n`);
+    } else {
+      doc.content += `\n\n${marker}- ${today}: ${noteText}`;
+    }
+  }
+  saveDocuments(docs);
+  renderDocuments();
+}
+
+function renderDocContent(content) {
+  const lines = content.split('\n');
+  let html = '';
+  for (const line of lines) {
+    const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    const bold = s => esc(s).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    if (/^# (.+)$/.test(line)) {
+      html += `<div class="doc-h1">${bold(line.slice(2))}</div>`;
+    } else if (/^## (.+)$/.test(line)) {
+      html += `<div class="doc-h2">${bold(line.slice(3))}</div>`;
+    } else if (/^  - \[x\] (.+)$/.test(line)) {
+      const m = line.match(/^  - \[x\] (.+)$/);
+      html += `<div class="doc-check done-item"><span class="doc-check-icon done">✓</span><span>${bold(m[1])}</span></div>`;
+    } else if (/^  - \[ \] (.+)$/.test(line)) {
+      const m = line.match(/^  - \[ \] (.+)$/);
+      html += `<div class="doc-check"><span class="doc-check-icon">○</span><span>${bold(m[1])}</span></div>`;
+    } else if (/^- \[x\] (.+)$/.test(line)) {
+      const m = line.match(/^- \[x\] (.+)$/);
+      html += `<div class="doc-check top done-item"><span class="doc-check-icon done">✓</span><span>${bold(m[1])}</span></div>`;
+    } else if (/^- \[ \] (.+)$/.test(line)) {
+      const m = line.match(/^- \[ \] (.+)$/);
+      html += `<div class="doc-check top"><span class="doc-check-icon">○</span><span>${bold(m[1])}</span></div>`;
+    } else if (/^- (.+)$/.test(line)) {
+      const m = line.match(/^- (.+)$/);
+      html += `<div class="doc-bullet">• ${bold(m[1])}</div>`;
+    } else if (line.trim() === '') {
+      html += '<div class="doc-spacer"></div>';
+    } else {
+      html += `<div class="doc-line">${bold(line)}</div>`;
+    }
+  }
+  return html;
 }
 
 // ── Garrett Action Parser ───────────────────────────────────
@@ -190,9 +309,45 @@ async function executeGarrettActions(actions) {
       }
       if (action.type === 'project-add') {
         if (action.name) {
-          addProject(action.name);
+          const milestones = (action.milestones || []).map(m => ({
+            id: generateId(),
+            name: typeof m === 'string' ? m : m.name,
+            completed: false,
+            subgoals: (typeof m === 'object' && Array.isArray(m.subgoals) ? m.subgoals : []).map(sg => ({
+              id: generateId(),
+              name: typeof sg === 'string' ? sg : sg.name,
+              completed: false,
+            })),
+          }));
+          addProject(action.name, action.description || '', milestones);
           showToast(`📁 Projekt "${action.name}" erstellt`, 'success');
         }
+        continue;
+      }
+      if (action.type === 'project-update') {
+        const projects = loadProjects();
+        const project = projects.find(p => p.name.toLowerCase() === (action.name || '').toLowerCase() || p.id === action.projectId);
+        if (!project) continue;
+        let changed = false;
+        if (action.completeMilestone) {
+          const ms = (project.milestones || []).find(m => m.name.toLowerCase() === action.completeMilestone.toLowerCase());
+          if (ms) { ms.completed = true; (ms.subgoals || []).forEach(sg => { sg.completed = true; }); changed = true; }
+        }
+        if (action.completeSubgoal) {
+          const { milestone: msName, subgoal: sgName } = action.completeSubgoal;
+          const ms = (project.milestones || []).find(m => m.name.toLowerCase() === (msName || '').toLowerCase());
+          if (ms) {
+            const sg = (ms.subgoals || []).find(sg => sg.name.toLowerCase() === (sgName || '').toLowerCase());
+            if (sg) { sg.completed = true; changed = true; }
+            if ((ms.subgoals || []).every(sg => sg.completed)) ms.completed = true;
+          }
+        }
+        if (changed) saveProjects(projects);
+        renderProjects();
+        renderLibProjects();
+        const pct = calculateProjectProgress(project);
+        if (project.documentId) updateProjectDocument(project.id, action.notes || `Projektstand aktualisiert (${pct}%)`);
+        showToast(`📁 "${project.name}" aktualisiert (${pct}%)`, 'success');
         continue;
       }
       if (action.type === 'calendar-create') {
@@ -1543,14 +1698,12 @@ function renderProjects() {
   }
 
   list.innerHTML = projects.map(p => {
-    const total = p.tasks?.length || 0;
-    const done  = p.tasks?.filter(t => t.done).length || 0;
-    const pct   = total > 0 ? Math.round((done / total) * 100) : 0;
+    const pct = calculateProjectProgress(p);
     return `
       <div class="project-card" data-id="${p.id}">
         <div class="project-card-header">
           <span class="project-name">${escapeHtml(p.name)}</span>
-          <span class="project-stats">${done}/${total} erledigt</span>
+          <span class="project-stats">${pct}%</span>
         </div>
         <div class="project-progress-track">
           <div class="project-progress-fill" style="width:${pct}%"></div>
@@ -1564,10 +1717,12 @@ function renderProjects() {
   });
 }
 
-function addProject(name) {
+function addProject(name, description = '', milestones = []) {
   if (!name.trim()) return;
   const projects = loadProjects();
-  projects.push({ id: generateId(), name: name.trim(), tasks: [] });
+  const project = { id: generateId(), name: name.trim(), description, milestones, tasks: [], createdAt: todayISO(), documentId: null };
+  project.documentId = createProjectDocument(project);
+  projects.push(project);
   saveProjects(projects);
   renderProjects();
   renderLibProjects();
@@ -1615,62 +1770,138 @@ function renderProjectModal(projectId) {
   if (titleEl) titleEl.textContent = p.name;
   if (!bodyEl) return;
 
-  const tasks = p.tasks || [];
-  bodyEl.innerHTML = `
-    <div class="project-task-list">
-      ${tasks.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">Noch keine Aufgaben</p>' : ''}
-      ${tasks.map(t => `
-        <div class="project-task-item${t.done ? ' done' : ''}" data-id="${t.id}">
-          <div class="project-task-cb"></div>
-          <span class="project-task-text">${escapeHtml(t.text)}</span>
-          <button class="project-task-del" data-id="${t.id}">×</button>
-        </div>
-      `).join('')}
-    </div>
-    <div class="project-add-task-row">
-      <input type="text" class="project-add-task-input" id="project-task-input" placeholder="Neue Aufgabe im Projekt..." />
-      <button class="project-add-task-btn" id="btn-add-project-task">Hinzufügen</button>
-    </div>
-  `;
+  const pct = calculateProjectProgress(p);
+  const ms  = p.milestones || [];
 
-  bodyEl.querySelectorAll('.project-task-item').forEach(item => {
-    item.addEventListener('click', (e) => {
-      if (e.target.classList.contains('project-task-del')) return;
-      const projects = loadProjects();
-      const pr = projects.find(x => x.id === projectId);
+  let contentHtml = `
+    <div class="project-progress-info">
+      <span style="font-size:13px;color:var(--text-muted)">${pct}% abgeschlossen</span>
+      <div class="project-progress-track" style="margin:6px 0">
+        <div class="project-progress-fill" style="width:${pct}%"></div>
+      </div>
+    </div>`;
+
+  if (ms.length > 0) {
+    contentHtml += `<div class="milestone-list">${ms.map(m => {
+      const allDone = m.subgoals?.length > 0 ? m.subgoals.every(sg => sg.completed) : false;
+      const msDone  = m.completed || allDone;
+      const sgs = m.subgoals || [];
+      return `
+        <div class="milestone-item${msDone ? ' done' : ''}" data-ms-id="${m.id}">
+          <div class="milestone-header">
+            <div class="milestone-cb">${msDone ? '✓' : ''}</div>
+            <span class="milestone-name">${escapeHtml(m.name)}</span>
+          </div>
+          ${sgs.length > 0 ? `<div class="subgoal-list">${sgs.map(sg => `
+            <div class="subgoal-item${sg.completed ? ' done' : ''}" data-sg-id="${sg.id}" data-ms-id="${m.id}">
+              <div class="subgoal-cb">${sg.completed ? '✓' : ''}</div>
+              <span class="subgoal-name">${escapeHtml(sg.name)}</span>
+            </div>`).join('')}</div>` : ''}
+        </div>`;
+    }).join('')}</div>`;
+  } else {
+    const tasks = p.tasks || [];
+    contentHtml += `
+      <div class="project-task-list">
+        ${tasks.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">Noch keine Aufgaben</p>' : ''}
+        ${tasks.map(t => `
+          <div class="project-task-item${t.done ? ' done' : ''}" data-id="${t.id}">
+            <div class="project-task-cb"></div>
+            <span class="project-task-text">${escapeHtml(t.text)}</span>
+            <button class="project-task-del" data-id="${t.id}">×</button>
+          </div>`).join('')}
+      </div>
+      <div class="project-add-task-row">
+        <input type="text" class="project-add-task-input" id="project-task-input" placeholder="Neue Aufgabe..." />
+        <button class="project-add-task-btn" id="btn-add-project-task">+</button>
+      </div>`;
+  }
+
+  if (p.documentId) {
+    contentHtml += `<div style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px">
+      <button class="btn-secondary" id="btn-view-project-doc" style="width:100%;font-size:13px">📄 Projektdokument</button>
+    </div>`;
+  }
+
+  bodyEl.innerHTML = contentHtml;
+
+  // Milestone toggle
+  bodyEl.querySelectorAll('.milestone-header').forEach(hdr => {
+    hdr.addEventListener('click', () => {
+      const item = hdr.closest('.milestone-item');
+      const prs = loadProjects();
+      const pr = prs.find(x => x.id === projectId);
       if (!pr) return;
-      const t = pr.tasks.find(x => x.id === item.dataset.id);
-      if (t) { t.done = !t.done; saveProjects(projects); renderProjectModal(projectId); renderProjects(); }
+      const m = (pr.milestones || []).find(m => m.id === item.dataset.msId);
+      if (!m) return;
+      m.completed = !m.completed;
+      if (m.completed) (m.subgoals || []).forEach(sg => { sg.completed = true; });
+      else (m.subgoals || []).forEach(sg => { sg.completed = false; });
+      saveProjects(prs);
+      if (pr.documentId) updateProjectDocument(pr.id, `Meilenstein "${m.name}" ${m.completed ? 'abgeschlossen' : 'wieder geöffnet'}`);
+      renderProjectModal(projectId); renderProjects(); renderLibProjects();
     });
   });
 
-  bodyEl.querySelectorAll('.project-task-del').forEach(btn => {
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const projects = loadProjects();
-      const pr = projects.find(x => x.id === projectId);
+  // Subgoal toggle
+  bodyEl.querySelectorAll('.subgoal-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const prs = loadProjects();
+      const pr = prs.find(x => x.id === projectId);
       if (!pr) return;
-      pr.tasks = pr.tasks.filter(x => x.id !== btn.dataset.id);
-      saveProjects(projects);
-      renderProjectModal(projectId);
-      renderProjects();
+      const m = (pr.milestones || []).find(m => m.id === item.dataset.msId);
+      if (!m) return;
+      const sg = (m.subgoals || []).find(sg => sg.id === item.dataset.sgId);
+      if (!sg) return;
+      sg.completed = !sg.completed;
+      m.completed = (m.subgoals || []).every(sg => sg.completed);
+      saveProjects(prs);
+      if (pr.documentId) updateProjectDocument(pr.id, `Teilziel "${sg.name}" ${sg.completed ? 'abgeschlossen' : 'wieder geöffnet'}`);
+      renderProjectModal(projectId); renderProjects(); renderLibProjects();
     });
   });
 
-  const addTaskBtn = document.getElementById('btn-add-project-task');
-  const addTaskInput = document.getElementById('project-task-input');
-  const addTask = () => {
-    if (!addTaskInput.value.trim()) return;
-    const projects = loadProjects();
-    const pr = projects.find(x => x.id === projectId);
-    if (!pr) return;
-    pr.tasks.push({ id: generateId(), text: addTaskInput.value.trim(), done: false });
-    saveProjects(projects);
-    renderProjectModal(projectId);
-    renderProjects();
-  };
-  if (addTaskBtn) addTaskBtn.addEventListener('click', addTask);
-  if (addTaskInput) addTaskInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addTask(); });
+  // Tasks (legacy) handlers
+  if (ms.length === 0) {
+    bodyEl.querySelectorAll('.project-task-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        if (e.target.classList.contains('project-task-del')) return;
+        const prs = loadProjects(); const pr = prs.find(x => x.id === projectId);
+        if (!pr) return;
+        const t = pr.tasks.find(x => x.id === item.dataset.id);
+        if (t) { t.done = !t.done; saveProjects(prs); renderProjectModal(projectId); renderProjects(); }
+      });
+    });
+    bodyEl.querySelectorAll('.project-task-del').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const prs = loadProjects(); const pr = prs.find(x => x.id === projectId);
+        if (!pr) return;
+        pr.tasks = pr.tasks.filter(x => x.id !== btn.dataset.id);
+        saveProjects(prs); renderProjectModal(projectId); renderProjects();
+      });
+    });
+    const addTaskBtn = document.getElementById('btn-add-project-task');
+    const addTaskInput = document.getElementById('project-task-input');
+    const addTask = () => {
+      if (!addTaskInput?.value.trim()) return;
+      const prs = loadProjects(); const pr = prs.find(x => x.id === projectId);
+      if (!pr) return;
+      pr.tasks.push({ id: generateId(), text: addTaskInput.value.trim(), done: false });
+      saveProjects(prs); renderProjectModal(projectId); renderProjects();
+    };
+    if (addTaskBtn) addTaskBtn.addEventListener('click', addTask);
+    if (addTaskInput) addTaskInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addTask(); });
+  }
+
+  // View project document
+  const btnViewDoc = document.getElementById('btn-view-project-doc');
+  if (btnViewDoc && p.documentId) {
+    btnViewDoc.addEventListener('click', () => {
+      const doc = loadDocuments().find(d => d.id === p.documentId);
+      if (doc) showDocView(doc);
+    });
+  }
 }
 
 function initProjectModal() {
@@ -1686,9 +1917,11 @@ function initProjectModal() {
 
   if (btnDelete) btnDelete.addEventListener('click', () => {
     if (!currentProjectId) return;
-    const projects = loadProjects().filter(p => p.id !== currentProjectId);
-    saveProjects(projects);
-    renderProjects();
+    const all = loadProjects();
+    const project = all.find(p => p.id === currentProjectId);
+    if (project?.documentId) saveDocuments(loadDocuments().filter(d => d.id !== project.documentId));
+    saveProjects(all.filter(p => p.id !== currentProjectId));
+    renderProjects(); renderLibProjects();
     closeModal();
   });
 }
@@ -1762,6 +1995,7 @@ function initHomeScreen() {
   initTodoAdd();
   initProjectAdd();
   initProjectModal();
+  initDocViewModal();
   const btnPlan = document.getElementById('btn-ai-plan');
   if (btnPlan) btnPlan.addEventListener('click', aiPlanDay);
   renderHomeScreen();
@@ -1844,13 +2078,14 @@ function renderLibProjects() {
     return;
   }
   list.innerHTML = projects.map(p => {
-    const total = p.tasks?.length || 0;
-    const done  = p.tasks?.filter(t => t.done).length || 0;
-    const pct   = total > 0 ? Math.round((done/total)*100) : 0;
+    const pct = calculateProjectProgress(p);
+    const ms  = p.milestones || [];
+    const openMs = ms.filter(m => !m.completed).length;
+    const statsLabel = ms.length > 0 ? `${pct}% · ${openMs}/${ms.length} Meilensteine` : `${pct}%`;
     return `<div class="project-card" data-id="${p.id}">
       <div class="project-card-header">
         <span class="project-name">${escapeHtml(p.name)}</span>
-        <span class="project-stats">${done}/${total} erledigt · ${pct}%</span>
+        <span class="project-stats">${statsLabel}</span>
       </div>
       <div class="project-progress-track">
         <div class="project-progress-fill" style="width:${pct}%"></div>
@@ -2002,7 +2237,20 @@ function showDocAddPrompt() {
 }
 
 function showDocView(doc) {
-  alert(`📄 ${doc.title}\n\n${doc.content}`);
+  const modal   = document.getElementById('doc-view-modal');
+  const titleEl = document.getElementById('doc-view-title');
+  const bodyEl  = document.getElementById('doc-view-body');
+  if (!modal) { alert(`📄 ${doc.title}\n\n${doc.content}`); return; }
+  if (titleEl) titleEl.textContent = doc.title;
+  if (bodyEl)  bodyEl.innerHTML = renderDocContent(doc.content);
+  modal.classList.remove('hidden');
+}
+
+function initDocViewModal() {
+  const modal = document.getElementById('doc-view-modal');
+  const btnClose = document.getElementById('btn-close-doc-view');
+  if (btnClose) btnClose.addEventListener('click', () => modal?.classList.add('hidden'));
+  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) modal.classList.add('hidden'); });
 }
 
 

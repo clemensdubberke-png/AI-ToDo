@@ -546,6 +546,21 @@
   <!-- Toast container -->
   <div class="toast-container" id="toast-container"></div>
 
+  <!-- ===== DOC VIEW MODAL ===== -->
+  <div class="modal-overlay hidden" id="doc-view-modal">
+    <div class="modal doc-view-modal-inner" role="dialog" aria-modal="true">
+      <div class="modal-header">
+        <h2 id="doc-view-title" style="font-size:15px"></h2>
+        <button class="btn-close-modal" id="btn-close-doc-view" aria-label="Schließen">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="modal-body doc-view-body" id="doc-view-body"></div>
+    </div>
+  </div>
+
   <!-- ===== PROJECT TASKS MODAL ===== -->
   <div class="modal-overlay hidden" id="project-modal">
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="project-modal-title">
