@@ -180,19 +180,13 @@ const state = {
 const $ = (id) => document.getElementById(id);
 
 const dom = {
-  sidebar:          $('sidebar'),
-  sidebarOverlay:   $('sidebar-overlay'),
-  chatList:         $('chat-list'),
-  btnNewChat:       $('btn-new-chat'),
-  btnMenuToggle:    $('btn-menu-toggle'),
-
+  // Chat tab
   chatHeaderTitle:  $('chat-header-title'),
   chatHeaderModel:  $('chat-header-model'),
   btnClearChat:     $('btn-clear-chat'),
   btnThemeToggle:   $('btn-theme-toggle'),
   iconDark:         $('icon-dark'),
   iconLight:        $('icon-light'),
-  btnHeaderSettings: $('btn-header-settings'),
 
   messagesWrapper:  $('messages-wrapper'),
   messagesList:     $('messages-list'),
@@ -204,13 +198,17 @@ const dom = {
   btnStop:          $('btn-stop'),
   apiWarning:       $('api-warning'),
 
+  // Library tab
+  chatList:         $('chat-list'),
+  btnNewChat:       $('btn-new-chat'),
+
+  // Settings modal
   settingsModal:    $('settings-modal'),
   apiKeyInput:      $('api-key-input'),
   btnToggleKey:     $('btn-toggle-key'),
   apiKeyStatus:     $('api-key-status'),
   modelSelect:      $('model-select'),
   systemPromptInput: $('system-prompt-input'),
-  btnOpenSettings:  $('btn-open-settings'),
   btnCloseSettings: $('btn-close-settings'),
   btnCancelSettings: $('btn-cancel-settings'),
   btnSaveSettings:  $('btn-save-settings'),
@@ -527,7 +525,7 @@ function newChat() {
   saveChats();
   renderChatList();
   renderMessages();
-  closeSidebar();
+  // sidebar removed – nothing to close
   dom.messageInput.focus();
 }
 
@@ -536,7 +534,7 @@ function switchChat(id) {
   saveChats();
   renderChatList();
   renderMessages();
-  closeSidebar();
+  // sidebar removed – nothing to close
   dom.messageInput.focus();
 }
 
@@ -1079,25 +1077,10 @@ function stopStreaming() {
   }
 }
 
-// ── Sidebar (Mobile) ─────────────────────────────────────────
-function openSidebar() {
-  dom.sidebar.classList.add('open');
-  dom.sidebarOverlay.classList.add('visible');
-}
-
-function closeSidebar() {
-  dom.sidebar.classList.remove('open');
-  dom.sidebarOverlay.classList.remove('visible');
-}
-
 // ── Event Listeners ──────────────────────────────────────────
 function initEventListeners() {
   // New chat
-  dom.btnNewChat.addEventListener('click', newChat);
-
-  // Mobile sidebar toggle
-  dom.btnMenuToggle.addEventListener('click', openSidebar);
-  dom.sidebarOverlay.addEventListener('click', closeSidebar);
+  dom.btnNewChat.addEventListener('click', () => { newChat(); switchTab('tab-chat'); });
 
   // Theme
   dom.btnThemeToggle.addEventListener('click', toggleTheme);
@@ -1105,11 +1088,8 @@ function initEventListeners() {
   // Clear chat
   dom.btnClearChat.addEventListener('click', clearActiveChat);
 
-  // Settings
-  dom.btnOpenSettings.addEventListener('click', openSettings);
-  dom.btnHeaderSettings.addEventListener('click', openSettings);
+  // Settings modal (triggered from bottom nav)
   dom.btnCloseSettings.addEventListener('click', closeSettings);
-  dom.btnCancelSettings.addEventListener('click', closeSettings);
   dom.btnSaveSettings.addEventListener('click', saveSettings);
 
   // Google Calendar – OAuth verbinden
@@ -1273,11 +1253,433 @@ window.addTrackerResultToChat = function(tracker, result) {
   renderChatList();
 };
 
+// ── Bottom Navigation & Tab System ───────────────────────────
+let activeTab = 'tab-home';
+
+function switchTab(tabId) {
+  // Remove active from all tabs and nav items
+  document.querySelectorAll('.tab-view').forEach(v => v.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+
+  const view = document.getElementById(tabId);
+  if (view) view.classList.add('active');
+
+  const navBtn = document.querySelector(`.nav-item[data-tab="${tabId}"]`);
+  if (navBtn) navBtn.classList.add('active');
+
+  activeTab = tabId;
+
+  // Refresh home screen when switching to it
+  if (tabId === 'tab-home') renderHomeScreen();
+}
+
+function initBottomNav() {
+  document.querySelectorAll('.nav-item[data-tab]').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
+  // Settings button opens modal
+  const navSettings = document.getElementById('nav-settings-btn');
+  if (navSettings) navSettings.addEventListener('click', openSettings);
+
+  // When a chat item is clicked in Library, switch to Chat tab
+  dom.chatList.addEventListener('click', (e) => {
+    if (e.target.closest('.chat-item')) {
+      setTimeout(() => switchTab('tab-chat'), 80);
+    }
+  });
+}
+
+
+// ── Home Screen ───────────────────────────────────────────────
+const LS_TODOS    = 'home_todos';
+const LS_PROJECTS = 'home_projects';
+
+// --- Greeting ---
+function renderGreeting() {
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Guten Morgen! ☀️'
+                 : hour < 18 ? 'Guten Tag! 👋'
+                              : 'Guten Abend! 🌙';
+  const dateStr = new Date().toLocaleDateString('de-DE', {
+    weekday: 'long', day: 'numeric', month: 'long',
+  });
+  const el = document.getElementById('home-greeting');
+  const dateEl = document.getElementById('home-date');
+  if (el) el.textContent = greeting;
+  if (dateEl) dateEl.textContent = dateStr;
+}
+
+// --- Calendar today in Home ---
+async function renderHomeCalendar() {
+  const section = document.getElementById('home-calendar-section');
+  const list    = document.getElementById('home-calendar-list');
+  if (!section || !list) return;
+
+  if (!isCalendarConfigured()) { section.style.display = 'none'; return; }
+
+  const events = await fetchCalendarAPI();
+  if (!events || events.length === 0) { section.style.display = 'none'; return; }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
+
+  const todayEvents = events.filter(e => {
+    const start = new Date(e.start?.dateTime || e.start?.date || '');
+    return start >= today && start < tomorrow;
+  });
+
+  if (todayEvents.length === 0) { section.style.display = 'none'; return; }
+
+  section.style.display = '';
+  list.innerHTML = todayEvents.map(e => {
+    const startRaw = e.start?.dateTime || e.start?.date || '';
+    const timeFmt = startRaw
+      ? new Date(startRaw).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+      : 'Ganztag';
+    return `<div class="home-cal-item">
+      <span class="home-cal-time">${timeFmt}</span>
+      <span class="home-cal-title">${e.summary || '(kein Titel)'}</span>
+    </div>`;
+  }).join('');
+}
+
+// --- Todos ---
+function loadTodos() {
+  try { return JSON.parse(localStorage.getItem(LS_TODOS) || '[]'); } catch { return []; }
+}
+function saveTodos(todos) {
+  localStorage.setItem(LS_TODOS, JSON.stringify(todos));
+}
+
+function renderTodos() {
+  const list = document.getElementById('home-todo-list');
+  if (!list) return;
+  const todos = loadTodos();
+
+  if (todos.length === 0) {
+    list.innerHTML = '<div class="todo-empty">Keine Aufgaben für heute – füge welche hinzu!</div>';
+    return;
+  }
+
+  list.innerHTML = todos.map(t => `
+    <div class="todo-item${t.done ? ' done' : ''}" data-id="${t.id}">
+      <div class="todo-checkbox"></div>
+      <span class="todo-text">${escapeHtml(t.text)}</span>
+      <button class="todo-delete" data-id="${t.id}" title="Löschen">×</button>
+    </div>
+  `).join('');
+
+  // Toggle done on click (anywhere except delete btn)
+  list.querySelectorAll('.todo-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (e.target.classList.contains('todo-delete')) return;
+      const todos = loadTodos();
+      const t = todos.find(x => x.id === item.dataset.id);
+      if (t) { t.done = !t.done; saveTodos(todos); renderTodos(); }
+    });
+  });
+
+  list.querySelectorAll('.todo-delete').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const todos = loadTodos().filter(x => x.id !== btn.dataset.id);
+      saveTodos(todos);
+      renderTodos();
+    });
+  });
+}
+
+function addTodo(text) {
+  if (!text.trim()) return;
+  const todos = loadTodos();
+  todos.push({ id: generateId(), text: text.trim(), done: false });
+  saveTodos(todos);
+  renderTodos();
+}
+
+function initTodoAdd() {
+  const btnAdd    = document.getElementById('btn-add-todo');
+  const addRow    = document.getElementById('todo-add-row');
+  const inputFld  = document.getElementById('todo-input-field');
+  const btnOk     = document.getElementById('btn-todo-confirm');
+  const btnCancel = document.getElementById('btn-todo-cancel');
+  if (!btnAdd) return;
+
+  const show = () => {
+    addRow.classList.remove('hidden');
+    inputFld.focus();
+  };
+  const hide = () => {
+    addRow.classList.add('hidden');
+    inputFld.value = '';
+  };
+  const confirm = () => {
+    addTodo(inputFld.value);
+    hide();
+  };
+
+  btnAdd.addEventListener('click', show);
+  btnOk.addEventListener('click', confirm);
+  btnCancel.addEventListener('click', hide);
+  inputFld.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') confirm();
+    if (e.key === 'Escape') hide();
+  });
+}
+
+// --- Projects ---
+function loadProjects() {
+  try { return JSON.parse(localStorage.getItem(LS_PROJECTS) || '[]'); } catch { return []; }
+}
+function saveProjects(projects) {
+  localStorage.setItem(LS_PROJECTS, JSON.stringify(projects));
+}
+
+function renderProjects() {
+  const list = document.getElementById('home-project-list');
+  if (!list) return;
+  const projects = loadProjects();
+
+  if (projects.length === 0) {
+    list.innerHTML = '<div class="project-empty">Noch keine Projekte – lege eines an!</div>';
+    return;
+  }
+
+  list.innerHTML = projects.map(p => {
+    const total = p.tasks?.length || 0;
+    const done  = p.tasks?.filter(t => t.done).length || 0;
+    const pct   = total > 0 ? Math.round((done / total) * 100) : 0;
+    return `
+      <div class="project-card" data-id="${p.id}">
+        <div class="project-card-header">
+          <span class="project-name">${escapeHtml(p.name)}</span>
+          <span class="project-stats">${done}/${total} erledigt</span>
+        </div>
+        <div class="project-progress-track">
+          <div class="project-progress-fill" style="width:${pct}%"></div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('.project-card').forEach(card => {
+    card.addEventListener('click', () => openProjectModal(card.dataset.id));
+  });
+}
+
+function addProject(name) {
+  if (!name.trim()) return;
+  const projects = loadProjects();
+  projects.push({ id: generateId(), name: name.trim(), tasks: [] });
+  saveProjects(projects);
+  renderProjects();
+}
+
+function initProjectAdd() {
+  const btnAdd    = document.getElementById('btn-add-project');
+  const addRow    = document.getElementById('project-add-row');
+  const inputFld  = document.getElementById('project-input-field');
+  const btnOk     = document.getElementById('btn-project-confirm');
+  const btnCancel = document.getElementById('btn-project-cancel');
+  if (!btnAdd) return;
+
+  const show = () => { addRow.classList.remove('hidden'); inputFld.focus(); };
+  const hide = () => { addRow.classList.add('hidden'); inputFld.value = ''; };
+  const confirm = () => { addProject(inputFld.value); hide(); };
+
+  btnAdd.addEventListener('click', show);
+  btnOk.addEventListener('click', confirm);
+  btnCancel.addEventListener('click', hide);
+  inputFld.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') confirm();
+    if (e.key === 'Escape') hide();
+  });
+}
+
+// --- Project Modal (tasks) ---
+let currentProjectId = null;
+
+function openProjectModal(projectId) {
+  const modal = document.getElementById('project-modal');
+  if (!modal) return;
+  currentProjectId = projectId;
+  renderProjectModal(projectId);
+  modal.classList.remove('hidden');
+}
+
+function renderProjectModal(projectId) {
+  const projects = loadProjects();
+  const p = projects.find(x => x.id === projectId);
+  if (!p) return;
+
+  const titleEl = document.getElementById('project-modal-title');
+  const bodyEl  = document.getElementById('project-modal-body');
+  if (titleEl) titleEl.textContent = p.name;
+  if (!bodyEl) return;
+
+  const tasks = p.tasks || [];
+  bodyEl.innerHTML = `
+    <div class="project-task-list">
+      ${tasks.length === 0 ? '<p style="color:var(--text-muted);font-size:13px;padding:8px 0">Noch keine Aufgaben</p>' : ''}
+      ${tasks.map(t => `
+        <div class="project-task-item${t.done ? ' done' : ''}" data-id="${t.id}">
+          <div class="project-task-cb"></div>
+          <span class="project-task-text">${escapeHtml(t.text)}</span>
+          <button class="project-task-del" data-id="${t.id}">×</button>
+        </div>
+      `).join('')}
+    </div>
+    <div class="project-add-task-row">
+      <input type="text" class="project-add-task-input" id="project-task-input" placeholder="Neue Aufgabe im Projekt..." />
+      <button class="project-add-task-btn" id="btn-add-project-task">Hinzufügen</button>
+    </div>
+  `;
+
+  bodyEl.querySelectorAll('.project-task-item').forEach(item => {
+    item.addEventListener('click', (e) => {
+      if (e.target.classList.contains('project-task-del')) return;
+      const projects = loadProjects();
+      const pr = projects.find(x => x.id === projectId);
+      if (!pr) return;
+      const t = pr.tasks.find(x => x.id === item.dataset.id);
+      if (t) { t.done = !t.done; saveProjects(projects); renderProjectModal(projectId); renderProjects(); }
+    });
+  });
+
+  bodyEl.querySelectorAll('.project-task-del').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const projects = loadProjects();
+      const pr = projects.find(x => x.id === projectId);
+      if (!pr) return;
+      pr.tasks = pr.tasks.filter(x => x.id !== btn.dataset.id);
+      saveProjects(projects);
+      renderProjectModal(projectId);
+      renderProjects();
+    });
+  });
+
+  const addTaskBtn = document.getElementById('btn-add-project-task');
+  const addTaskInput = document.getElementById('project-task-input');
+  const addTask = () => {
+    if (!addTaskInput.value.trim()) return;
+    const projects = loadProjects();
+    const pr = projects.find(x => x.id === projectId);
+    if (!pr) return;
+    pr.tasks.push({ id: generateId(), text: addTaskInput.value.trim(), done: false });
+    saveProjects(projects);
+    renderProjectModal(projectId);
+    renderProjects();
+  };
+  if (addTaskBtn) addTaskBtn.addEventListener('click', addTask);
+  if (addTaskInput) addTaskInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addTask(); });
+}
+
+function initProjectModal() {
+  const modal     = document.getElementById('project-modal');
+  const btnClose1 = document.getElementById('btn-close-project-modal');
+  const btnClose2 = document.getElementById('btn-close-project-modal-ok');
+  const btnDelete = document.getElementById('btn-delete-project');
+  const closeModal = () => { if (modal) modal.classList.add('hidden'); };
+
+  if (btnClose1) btnClose1.addEventListener('click', closeModal);
+  if (btnClose2) btnClose2.addEventListener('click', closeModal);
+  if (modal) modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+
+  if (btnDelete) btnDelete.addEventListener('click', () => {
+    if (!currentProjectId) return;
+    const projects = loadProjects().filter(p => p.id !== currentProjectId);
+    saveProjects(projects);
+    renderProjects();
+    closeModal();
+  });
+}
+
+// --- AI Planning ---
+async function aiPlanDay() {
+  const btn = document.getElementById('btn-ai-plan');
+  const loading = document.getElementById('home-ai-loading');
+  if (!state.apiKey) { openSettings(); return; }
+  if (btn) btn.disabled = true;
+  if (loading) loading.classList.remove('hidden');
+
+  const todos    = loadTodos().filter(t => !t.done).map(t => `- ${t.text}`).join('\n');
+  const projects = loadProjects().map(p => {
+    const open = p.tasks?.filter(t => !t.done).map(t => `  - ${t.text}`).join('\n') || '';
+    return `Projekt "${p.name}":\n${open || '  (keine Aufgaben)'}`;
+  }).join('\n');
+
+  let calContext = '';
+  if (isCalendarConfigured()) {
+    const events = await fetchCalendarAPI();
+    if (events && events.length > 0) calContext = formatCalendarForPrompt(events);
+  }
+
+  const today = new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' });
+  const prompt = `Heute ist ${today}.\n\n${calContext ? calContext + '\n\n' : ''}Aktuelle offene To-dos:\n${todos || '(keine)'}\n\nProjekte:\n${projects || '(keine)'}\n\nSchlage mir bitte 3-5 konkrete, realistische Aufgaben für heute vor. Gib nur die Aufgaben aus, eine pro Zeile, ohne Nummerierung und ohne extra Erklärung. Halte jede Aufgabe kurz (max 60 Zeichen).`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': state.apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: state.model,
+        max_tokens: 256,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      const text = (data.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+      const lines = text.split('\n').map(l => l.replace(/^[-•*]\s*/, '').trim()).filter(Boolean);
+      lines.forEach(line => addTodo(line));
+      showToast(`${lines.length} Aufgaben von KI hinzugefügt ✓`, 'success');
+    } else {
+      showToast('KI-Planung fehlgeschlagen – API-Fehler', 'error');
+    }
+  } catch {
+    showToast('KI-Planung fehlgeschlagen', 'error');
+  } finally {
+    if (btn) btn.disabled = false;
+    if (loading) loading.classList.add('hidden');
+  }
+}
+
+// --- Render full home screen ---
+function renderHomeScreen() {
+  renderGreeting();
+  renderTodos();
+  renderProjects();
+  renderHomeCalendar().catch(() => {});
+}
+
+// --- Init home ---
+function initHomeScreen() {
+  initTodoAdd();
+  initProjectAdd();
+  initProjectModal();
+  const btnPlan = document.getElementById('btn-ai-plan');
+  if (btnPlan) btnPlan.addEventListener('click', aiPlanDay);
+  renderHomeScreen();
+}
+
+
 // ── Init ─────────────────────────────────────────────────────
 function init() {
   loadSettings();
   loadChats();
   initEventListeners();
+  initBottomNav();
+  initHomeScreen();
   renderChatList();
   updateHeaderModel();
   updateApiWarning();
