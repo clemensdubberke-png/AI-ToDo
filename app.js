@@ -59,7 +59,14 @@ Wenn Clemens eine Aufgabe erwähnt:
 - Keine unnötigen Floskeln am Anfang oder Ende
 
 ## Automatische Aktionen (WICHTIG)
-Wenn Clemens einen Termin, eine Erinnerung oder eine geplante Suche nennt, füge am Ende deiner Antwort unsichtbar einen Aktionsblock ein. Das System verarbeitet ihn automatisch – Clemens sieht ihn nicht.
+Wenn Clemens einen Termin, eine Erinnerung, eine Aufgabe oder eine geplante Suche nennt, füge am Ende deiner Antwort unsichtbar einen Aktionsblock ein. Das System verarbeitet ihn automatisch – Clemens sieht ihn nicht.
+
+Heutiges Datum: ${new Date().toISOString().split('T')[0]} | Morgiges Datum: ${(() => { const t = new Date(); t.setDate(t.getDate()+1); return t.toISOString().split('T')[0]; })()}
+
+Format für Aufgaben (Home-Screen To-do):
+\`\`\`garrett-action
+{"type":"todo-add","text":"Kurze Aufgabenbeschreibung","date":"YYYY-MM-DD"}
+\`\`\`
 
 Format für Erinnerungen/Termine:
 \`\`\`garrett-action
@@ -71,13 +78,16 @@ Format für geplante Web-Suchen:
 {"type":"search","name":"Suchname","query":"Was soll gesucht werden","date":"YYYY-MM-DD","time":"HH:MM","frequency":"once|daily|weekly|hourly"}
 \`\`\`
 
-Wann einen Aktionsblock hinzufügen:
-- Clemens nennt einen konkreten Zeitpunkt + Aktivität: "Ich habe morgen um 14 Uhr Arzttermin" → reminder
-- Clemens bittet um Erinnerung: "Erinnere mich um 9 Uhr an das Meeting" → reminder
-- Clemens möchte regelmäßige Infos: "Zeig mir täglich um 8 Uhr die Börsenkurse" → search
-- Nur wenn Uhrzeit klar erkennbar ist (HH:MM). Bei Unklarheit nachfragen, KEINEN Block einfügen.
-- date: "heute" = ${new Date().toISOString().split('T')[0]}, "morgen" = berechne selbst
-- Keine Aktionsblöcke für reine Gespräche ohne Zeitbezug
+Wann welchen Aktionsblock:
+- Clemens nennt eine konkrete Aufgabe für heute/morgen/ein Datum → todo-add (KEIN Uhrzeit nötig)
+  Beispiele: "Ich muss heute noch die Rechnung schicken" → todo-add date=heute
+             "Morgen muss ich den Arzt anrufen" → todo-add date=morgen
+             "Am Freitag Präsentation vorbereiten" → todo-add date=YYYY-MM-DD
+- Clemens bittet um Erinnerung zu einer Uhrzeit → reminder
+- Clemens möchte regelmäßige Infos → search
+- Bei Uhrzeit: Nur reminder/search wenn HH:MM klar. Bei Unklarheit nachfragen.
+- Mehrere Aufgaben → mehrere todo-add Blöcke
+- Keine Aktionsblöcke für reine Gespräche ohne konkreten Handlungsbedarf
 
 ## Web-Suche
 Du hast Zugriff auf das Internet über ein Web-Such-Tool. Nutze es aktiv wenn:
@@ -106,7 +116,46 @@ function buildSystemPrompt() {
   if (state.calendarContext) {
     prompt += '\n\n' + state.calendarContext;
   }
+  // Inject current home screen state so AI is aware
+  const homeCtx = buildHomeContext();
+  if (homeCtx) prompt += '\n\n' + homeCtx;
   return prompt;
+}
+
+function buildHomeContext() {
+  try {
+    const today = todayISO();
+    const todos = loadTodos();
+    const todayTodos = todos.filter(t => !t.dueDate || t.dueDate <= today);
+    const futureTodos = todos.filter(t => t.dueDate && t.dueDate > today);
+    const projects = loadProjects();
+
+    const lines = ['## Aktueller Home-Screen'];
+
+    if (todayTodos.length > 0) {
+      lines.push('### Heutige Aufgaben');
+      todayTodos.forEach(t => lines.push(`- [${t.done ? 'x' : ' '}] ${t.text}`));
+    } else {
+      lines.push('### Heutige Aufgaben\nKeine');
+    }
+
+    if (futureTodos.length > 0) {
+      lines.push('### Geplante Aufgaben (nächste Tage)');
+      futureTodos.forEach(t => lines.push(`- ${t.dueDate}: ${t.text}`));
+    }
+
+    if (projects.length > 0) {
+      lines.push('### Projekte');
+      projects.forEach(p => {
+        const done = p.tasks?.filter(t => t.done).length || 0;
+        const total = p.tasks?.length || 0;
+        const open = p.tasks?.filter(t => !t.done).map(t => t.text) || [];
+        lines.push(`- **${p.name}** (${done}/${total} erledigt)${open.length ? ': ' + open.slice(0, 3).join(', ') : ''}`);
+      });
+    }
+
+    return lines.join('\n');
+  } catch { return ''; }
 }
 
 // ── Garrett Action Parser ───────────────────────────────────
@@ -125,6 +174,13 @@ async function executeGarrettActions(actions) {
   if (!actions.length) return;
   for (const action of actions) {
     try {
+      if (action.type === 'todo-add') {
+        const dueDate = resolveTodoDate(action.date);
+        addTodo(action.text || 'Aufgabe', dueDate);
+        const label = dueDate === todayISO() ? 'heute' : dueDate === tomorrowISO() ? 'morgen' : dueDate;
+        showToast(`📋 Aufgabe für ${label} hinzugefügt`, 'success');
+        continue;
+      }
       if (action.type === 'calendar-create') {
         openCalendarQuickAdd(action);
         continue;
@@ -149,6 +205,21 @@ async function executeGarrettActions(actions) {
       console.warn('[Garrett] Action failed:', e);
     }
   }
+}
+
+function todayISO() {
+  return new Date().toISOString().split('T')[0];
+}
+function tomorrowISO() {
+  const d = new Date(); d.setDate(d.getDate() + 1);
+  return d.toISOString().split('T')[0];
+}
+function resolveTodoDate(raw) {
+  if (!raw || raw === 'today' || raw === 'heute') return todayISO();
+  if (raw === 'tomorrow' || raw === 'morgen') return tomorrowISO();
+  // validate YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  return todayISO();
 }
 
 const LS = {
@@ -1271,6 +1342,11 @@ function switchTab(tabId) {
 
   // Refresh home screen when switching to it
   if (tabId === 'tab-home') renderHomeScreen();
+  // Reset library to menu when entering
+  if (tabId === 'tab-library') {
+    document.querySelectorAll('.library-sub').forEach(s => s.classList.add('hidden'));
+    document.getElementById('library-menu')?.classList.remove('hidden');
+  }
 }
 
 function initBottomNav() {
@@ -1357,7 +1433,10 @@ function saveTodos(todos) {
 function renderTodos() {
   const list = document.getElementById('home-todo-list');
   if (!list) return;
-  const todos = loadTodos();
+  const today = todayISO();
+  // Show todos due today or earlier (overdue), sorted by dueDate
+  const todos = loadTodos().filter(t => !t.dueDate || t.dueDate <= today)
+    .sort((a, b) => (a.dueDate || '').localeCompare(b.dueDate || ''));
 
   if (todos.length === 0) {
     list.innerHTML = '<div class="todo-empty">Keine Aufgaben für heute – füge welche hinzu!</div>';
@@ -1392,12 +1471,13 @@ function renderTodos() {
   });
 }
 
-function addTodo(text) {
+function addTodo(text, dueDate) {
   if (!text.trim()) return;
   const todos = loadTodos();
-  todos.push({ id: generateId(), text: text.trim(), done: false });
+  todos.push({ id: generateId(), text: text.trim(), done: false, dueDate: dueDate || todayISO() });
   saveTodos(todos);
   renderTodos();
+  renderSchedule(); // keep schedule in sync
 }
 
 function initTodoAdd() {
@@ -1476,6 +1556,7 @@ function addProject(name) {
   projects.push({ id: generateId(), name: name.trim(), tasks: [] });
   saveProjects(projects);
   renderProjects();
+  renderLibProjects();
 }
 
 function initProjectAdd() {
@@ -1673,6 +1754,244 @@ function initHomeScreen() {
 }
 
 
+// ── Library Hub Navigation ────────────────────────────────────
+function openLibSection(section) {
+  // Hide menu, show sub-view
+  document.getElementById('library-menu')?.classList.add('hidden');
+  document.querySelectorAll('.library-sub').forEach(s => s.classList.add('hidden'));
+  const sub = document.getElementById(`lib-sub-${section}`);
+  if (sub) sub.classList.remove('hidden');
+
+  // Populate sub-view content
+  if (section === 'tracker') {
+    if (typeof renderTrackerList === 'function') renderTrackerList();
+  }
+  if (section === 'schedule') renderSchedule();
+  if (section === 'projects') renderLibProjects();
+  if (section === 'documents') renderDocuments();
+}
+
+function closeLibSection() {
+  document.querySelectorAll('.library-sub').forEach(s => s.classList.add('hidden'));
+  document.getElementById('library-menu')?.classList.remove('hidden');
+}
+
+function initLibraryHub() {
+  // Menu item clicks
+  document.querySelectorAll('.lib-nav-item[data-section]').forEach(btn => {
+    btn.addEventListener('click', () => openLibSection(btn.dataset.section));
+  });
+
+  // Back buttons
+  document.querySelectorAll('.lib-back-btn[data-back]').forEach(btn => {
+    btn.addEventListener('click', closeLibSection);
+  });
+
+  // "+ Tracker" button in Überwachung sub-view
+  const btnAddTracker = document.getElementById('lib-btn-add-tracker');
+  if (btnAddTracker) btnAddTracker.addEventListener('click', () => {
+    if (typeof openTrackerModal === 'function') openTrackerModal();
+  });
+
+  // Lib project add
+  const btnAddProj = document.getElementById('lib-btn-add-project');
+  const addRowProj = document.getElementById('lib-project-add-row');
+  const inputProj  = document.getElementById('lib-project-input-field');
+  const btnOkProj  = document.getElementById('lib-btn-project-confirm');
+  const btnCancelProj = document.getElementById('lib-btn-project-cancel');
+  if (btnAddProj) {
+    const show = () => { addRowProj?.classList.remove('hidden'); inputProj?.focus(); };
+    const hide = () => { addRowProj?.classList.add('hidden'); if(inputProj) inputProj.value=''; };
+    const confirm = () => { if (inputProj?.value.trim()) { addProject(inputProj.value); renderLibProjects(); } hide(); };
+    btnAddProj.addEventListener('click', show);
+    if (btnOkProj) btnOkProj.addEventListener('click', confirm);
+    if (btnCancelProj) btnCancelProj.addEventListener('click', hide);
+    if (inputProj) inputProj.addEventListener('keydown', e => { if(e.key==='Enter') confirm(); if(e.key==='Escape') hide(); });
+  }
+
+  // Doc add
+  const btnAddDoc = document.getElementById('lib-btn-add-doc');
+  if (btnAddDoc) btnAddDoc.addEventListener('click', showDocAddPrompt);
+
+  // When switching to library tab from bottom nav, reset to menu
+  document.querySelector('.nav-item[data-tab="tab-library"]')?.addEventListener('click', () => {
+    closeLibSection();
+  });
+}
+
+// --- Library Projects (mirrors home projects) ---
+function renderLibProjects() {
+  const list = document.getElementById('lib-project-list');
+  if (!list) return;
+  const projects = loadProjects();
+
+  if (projects.length === 0) {
+    list.innerHTML = '<div class="project-empty">Noch keine Projekte</div>';
+    return;
+  }
+  list.innerHTML = projects.map(p => {
+    const total = p.tasks?.length || 0;
+    const done  = p.tasks?.filter(t => t.done).length || 0;
+    const pct   = total > 0 ? Math.round((done/total)*100) : 0;
+    return `<div class="project-card" data-id="${p.id}">
+      <div class="project-card-header">
+        <span class="project-name">${escapeHtml(p.name)}</span>
+        <span class="project-stats">${done}/${total} erledigt · ${pct}%</span>
+      </div>
+      <div class="project-progress-track">
+        <div class="project-progress-fill" style="width:${pct}%"></div>
+      </div>
+    </div>`;
+  }).join('');
+  list.querySelectorAll('.project-card').forEach(card => {
+    card.addEventListener('click', () => openProjectModal(card.dataset.id));
+  });
+}
+
+// --- Schedule (Zeitplan) – next 7 days ---
+async function renderSchedule() {
+  const container = document.getElementById('lib-schedule-content');
+  if (!container) return;
+
+  const todos = loadTodos();
+  let calEvents = [];
+  if (isCalendarConfigured()) {
+    calEvents = (await fetchCalendarAPI().catch(() => null)) || [];
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  container.innerHTML = '';
+
+  for (let i = 0; i < 7; i++) {
+    const day = new Date(today);
+    day.setDate(day.getDate() + i);
+    const iso  = day.toISOString().split('T')[0];
+    const isToday = i === 0;
+    const label = isToday
+      ? 'Heute'
+      : day.toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'short' });
+
+    // Todos for this day (and overdue on day 0)
+    const dayTodos = todos.filter(t => {
+      if (!t.dueDate) return isToday;
+      return t.dueDate === iso;
+    });
+
+    // Calendar events for this day
+    const dayEvents = calEvents.filter(e => {
+      const start = new Date(e.start?.dateTime || e.start?.date || '');
+      const startISO = start.toISOString().split('T')[0];
+      return startISO === iso;
+    });
+
+    if (!isToday && dayTodos.length === 0 && dayEvents.length === 0) continue;
+
+    const section = document.createElement('div');
+    section.className = 'schedule-day';
+
+    const header = document.createElement('div');
+    header.className = `schedule-day-header${isToday ? ' today-header' : ''}`;
+    header.innerHTML = label + (isToday ? '<span class="schedule-day-badge">Heute</span>' : '');
+    section.appendChild(header);
+
+    // Calendar events first
+    dayEvents.forEach(e => {
+      const startRaw = e.start?.dateTime || '';
+      const time = startRaw ? new Date(startRaw).toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'}) : '';
+      const item = document.createElement('div');
+      item.className = 'schedule-item';
+      item.innerHTML = `<div class="schedule-item-dot cal"></div>
+        <span class="schedule-item-text">${escapeHtml(e.summary || '')}</span>
+        ${time ? `<span class="schedule-item-time">${time}</span>` : ''}`;
+      section.appendChild(item);
+    });
+
+    // Todos
+    dayTodos.forEach(t => {
+      const item = document.createElement('div');
+      item.className = 'schedule-item';
+      item.innerHTML = `<div class="schedule-item-dot todo"></div>
+        <span class="schedule-item-text${t.done ? ' done' : ''}">${escapeHtml(t.text)}</span>`;
+      item.addEventListener('click', () => {
+        const allTodos = loadTodos();
+        const found = allTodos.find(x => x.id === t.id);
+        if (found) { found.done = !found.done; saveTodos(allTodos); renderTodos(); renderSchedule(); }
+      });
+      section.appendChild(item);
+    });
+
+    if (dayTodos.length === 0 && dayEvents.length === 0) {
+      const empty = document.createElement('div');
+      empty.className = 'schedule-empty';
+      empty.textContent = 'Keine Einträge';
+      section.appendChild(empty);
+    }
+
+    container.appendChild(section);
+  }
+  if (!container.children.length) {
+    container.innerHTML = '<div class="doc-empty">Keine Einträge für die nächsten 7 Tage</div>';
+  }
+}
+
+// --- Documents ---
+const LS_DOCS = 'home_documents';
+
+function loadDocuments() {
+  try { return JSON.parse(localStorage.getItem(LS_DOCS) || '[]'); } catch { return []; }
+}
+function saveDocuments(docs) { localStorage.setItem(LS_DOCS, JSON.stringify(docs)); }
+
+function renderDocuments() {
+  const list = document.getElementById('lib-documents-list');
+  if (!list) return;
+  const docs = loadDocuments();
+  if (docs.length === 0) {
+    list.innerHTML = '<div class="doc-empty">Noch keine Dokumente – erstelle eine Notiz!</div>';
+    return;
+  }
+  list.innerHTML = docs.map(d => `
+    <div class="doc-card" data-id="${d.id}">
+      <div class="doc-card-header">
+        <span class="doc-card-title">${escapeHtml(d.title)}</span>
+        <button class="doc-card-del" data-id="${d.id}">×</button>
+      </div>
+      <div class="doc-card-preview">${escapeHtml(d.content)}</div>
+    </div>
+  `).join('');
+  list.querySelectorAll('.doc-card-del').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      saveDocuments(loadDocuments().filter(d => d.id !== btn.dataset.id));
+      renderDocuments();
+    });
+  });
+  list.querySelectorAll('.doc-card').forEach(card => {
+    card.addEventListener('click', e => {
+      if (e.target.classList.contains('doc-card-del')) return;
+      const doc = loadDocuments().find(d => d.id === card.dataset.id);
+      if (doc) showDocView(doc);
+    });
+  });
+}
+
+function showDocAddPrompt() {
+  const title   = prompt('Titel des Dokuments:');
+  if (!title?.trim()) return;
+  const content = prompt('Inhalt / Notiz:');
+  if (content === null) return;
+  const docs = loadDocuments();
+  docs.unshift({ id: generateId(), title: title.trim(), content: content.trim(), createdAt: new Date().toISOString() });
+  saveDocuments(docs);
+  renderDocuments();
+}
+
+function showDocView(doc) {
+  alert(`📄 ${doc.title}\n\n${doc.content}`);
+}
+
+
 // ── Init ─────────────────────────────────────────────────────
 function init() {
   loadSettings();
@@ -1680,6 +1999,7 @@ function init() {
   initEventListeners();
   initBottomNav();
   initHomeScreen();
+  initLibraryHub();
   renderChatList();
   updateHeaderModel();
   updateApiWarning();

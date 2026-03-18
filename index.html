@@ -254,22 +254,180 @@
     </div><!-- /tab-chat -->
 
 
-    <!-- ===== TAB: LIBRARY (Chat-Verlauf) ===== -->
+    <!-- ===== TAB: LIBRARY (Hub) ===== -->
     <div class="tab-view" id="tab-library">
-      <div class="library-screen">
+
+      <!-- ── Main Menu ── -->
+      <div class="library-menu" id="library-menu">
         <div class="library-header">
-          <span class="library-title">Verlauf</span>
+          <span class="library-title">Bibliothek</span>
+        </div>
+        <nav class="lib-nav-list">
+
+          <button class="lib-nav-item" data-section="chats">
+            <div class="lib-nav-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+              </svg>
+            </div>
+            <div class="lib-nav-text">
+              <span class="lib-nav-label">Chats</span>
+              <span class="lib-nav-desc">Chat-Verlauf &amp; neue Unterhaltungen</span>
+            </div>
+            <svg class="lib-nav-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+          </button>
+
+          <button class="lib-nav-item" data-section="projects">
+            <div class="lib-nav-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+              </svg>
+            </div>
+            <div class="lib-nav-text">
+              <span class="lib-nav-label">Projekte</span>
+              <span class="lib-nav-desc">Alle Projekte mit Fortschritt</span>
+            </div>
+            <svg class="lib-nav-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+          </button>
+
+          <button class="lib-nav-item" data-section="tracker">
+            <div class="lib-nav-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+              </svg>
+            </div>
+            <div class="lib-nav-text">
+              <span class="lib-nav-label">Überwachung</span>
+              <span class="lib-nav-desc">Tracker, Erinnerungen &amp; Web-Suchen</span>
+            </div>
+            <svg class="lib-nav-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+          </button>
+
+          <button class="lib-nav-item" data-section="schedule">
+            <div class="lib-nav-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+              </svg>
+            </div>
+            <div class="lib-nav-text">
+              <span class="lib-nav-label">Zeitplan</span>
+              <span class="lib-nav-desc">Aufgaben der nächsten 7 Tage</span>
+            </div>
+            <svg class="lib-nav-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+          </button>
+
+          <button class="lib-nav-item" data-section="documents">
+            <div class="lib-nav-icon">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              </svg>
+            </div>
+            <div class="lib-nav-text">
+              <span class="lib-nav-label">Dokumente</span>
+              <span class="lib-nav-desc">Notizen &amp; gespeicherte Inhalte</span>
+            </div>
+            <svg class="lib-nav-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/>
+            </svg>
+          </button>
+
+        </nav>
+      </div><!-- /library-menu -->
+
+      <!-- ── Sub: Chats ── -->
+      <div class="library-sub hidden" id="lib-sub-chats">
+        <div class="lib-sub-header">
+          <button class="lib-back-btn" data-back>
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <span class="lib-sub-title">Chats</span>
           <button class="btn-new-chat-lib" id="btn-new-chat">
-            <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/>
             </svg>
             Neuer Chat
           </button>
         </div>
-        <div class="chat-list" id="chat-list">
-          <!-- Chat history injected here -->
+        <div class="chat-list" id="chat-list"></div>
+      </div>
+
+      <!-- ── Sub: Projekte ── -->
+      <div class="library-sub hidden" id="lib-sub-projects">
+        <div class="lib-sub-header">
+          <button class="lib-back-btn" data-back>
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <span class="lib-sub-title">Projekte</span>
+          <button class="home-add-btn" id="lib-btn-add-project">+ Projekt</button>
+        </div>
+        <div class="lib-sub-body">
+          <div class="home-add-input hidden" id="lib-project-add-row">
+            <input type="text" class="home-add-input-field" id="lib-project-input-field" placeholder="Projektname..." />
+            <button class="home-input-confirm" id="lib-btn-project-confirm">✓</button>
+            <button class="home-input-cancel" id="lib-btn-project-cancel">✕</button>
+          </div>
+          <div id="lib-project-list" class="home-project-list"></div>
         </div>
       </div>
+
+      <!-- ── Sub: Überwachung ── -->
+      <div class="library-sub hidden" id="lib-sub-tracker">
+        <div class="lib-sub-header">
+          <button class="lib-back-btn" data-back>
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <span class="lib-sub-title">Überwachung</span>
+          <button class="home-add-btn" id="lib-btn-add-tracker">+ Tracker</button>
+        </div>
+        <div class="lib-sub-body">
+          <div id="tracker-list" class="tracker-list-container"></div>
+        </div>
+      </div>
+
+      <!-- ── Sub: Zeitplan ── -->
+      <div class="library-sub hidden" id="lib-sub-schedule">
+        <div class="lib-sub-header">
+          <button class="lib-back-btn" data-back>
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <span class="lib-sub-title">Zeitplan</span>
+        </div>
+        <div class="lib-sub-body" id="lib-schedule-content"></div>
+      </div>
+
+      <!-- ── Sub: Dokumente ── -->
+      <div class="library-sub hidden" id="lib-sub-documents">
+        <div class="lib-sub-header">
+          <button class="lib-back-btn" data-back>
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7"/>
+            </svg>
+          </button>
+          <span class="lib-sub-title">Dokumente</span>
+          <button class="home-add-btn" id="lib-btn-add-doc">+ Dokument</button>
+        </div>
+        <div class="lib-sub-body">
+          <div id="lib-documents-list"></div>
+        </div>
+      </div>
+
     </div><!-- /tab-library -->
 
   </div><!-- /app -->
