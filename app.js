@@ -157,7 +157,10 @@ const LS = {
   CHATS:             'claude_chats',
   THEME:             'claude_theme',
   ACTIVE_CHAT:       'claude_active_chat',
-  GCAL_ICS_URL:      'google_calendar_ics_url',
+  GCAL_CLIENT_ID:    'gcal_client_id',
+  GCAL_ACCESS_TOKEN: 'gcal_access_token',
+  GCAL_TOKEN_EXPIRY: 'gcal_token_expiry',
+  GCAL_USER_EMAIL:   'gcal_user_email',
 };
 
 // ── State ───────────────────────────────────────────────────
@@ -169,7 +172,7 @@ const state = {
   activeChatId: null,
   streaming: false,
   abortController: null,
-  calendarIcsUrl: '',
+  calendarClientId: '',
   calendarContext: null,
 };
 
@@ -214,7 +217,7 @@ const dom = {
 
   toastContainer:   $('toast-container'),
 
-  gcalIcsUrlInput:   $('gcal-ics-url-input'),
+  gcalClientIdInput: $('gcal-client-id-input'),
   btnGcalConnect:    $('btn-gcal-connect'),
   gcalStatus:        $('gcal-status'),
 };
@@ -362,76 +365,100 @@ function updateHeaderModel() {
   dom.chatHeaderModel.textContent = state.model;
 }
 
-// ── Google Calendar (ICS + Quick-Add, kein OAuth) ─────────────
+// ── Google Calendar (OAuth 2.0 via Google Identity Services) ──
+let gcalTokenClient  = null;
+let gcalTokenResolve = null;
+
 function isCalendarConfigured() {
-  return !!state.calendarIcsUrl;
+  const token  = localStorage.getItem(LS.GCAL_ACCESS_TOKEN);
+  const expiry = localStorage.getItem(LS.GCAL_TOKEN_EXPIRY);
+  return !!(token && expiry && Date.now() < Number(expiry));
 }
 
 function initGoogleCalendar() {
-  state.calendarIcsUrl = localStorage.getItem(LS.GCAL_ICS_URL) || '';
+  // Migration: alte ICS-URL entfernen, falls vorhanden
+  localStorage.removeItem('google_calendar_ics_url');
+  state.calendarClientId = localStorage.getItem(LS.GCAL_CLIENT_ID) || '';
+  updateGCalStatus();
 }
 
 function updateGCalStatus() {
-  const statusEl   = document.getElementById('gcal-status');
-  const btnConnect = document.getElementById('btn-gcal-connect');
-  const input      = document.getElementById('gcal-ics-url-input');
+  const statusEl     = document.getElementById('gcal-status');
+  const setupDiv     = document.getElementById('gcal-setup');
+  const connectedDiv = document.getElementById('gcal-connected');
+  const clientInput  = document.getElementById('gcal-client-id-input');
   if (!statusEl) return;
-  if (input && state.calendarIcsUrl) input.value = state.calendarIcsUrl;
-  if (state.calendarIcsUrl) {
-    statusEl.innerHTML = `<span class="gcal-badge connected">✅ Kalender verbunden</span>`;
-    if (btnConnect) btnConnect.textContent = 'Entfernen';
+
+  const email     = localStorage.getItem(LS.GCAL_USER_EMAIL) || '';
+  const connected = isCalendarConfigured();
+
+  if (connected) {
+    statusEl.innerHTML = `<span class="gcal-badge connected">✅ Kalender verbunden${email ? ' – ' + email : ''}</span>`;
+    if (setupDiv)     setupDiv.style.display     = 'none';
+    if (connectedDiv) connectedDiv.style.display = '';
   } else {
     statusEl.innerHTML = `<span class="gcal-badge disconnected">🔴 Nicht verbunden</span>`;
-    if (btnConnect) btnConnect.textContent = 'Speichern';
+    if (setupDiv)     setupDiv.style.display     = '';
+    if (connectedDiv) connectedDiv.style.display = 'none';
+    if (clientInput && state.calendarClientId) clientInput.value = state.calendarClientId;
   }
 }
 
-function parseICS(text) {
-  const events = [];
-  const blocks = text.match(/BEGIN:VEVENT[\s\S]*?END:VEVENT/g) || [];
-  for (const block of blocks) {
-    const get = (prop) => {
-      const m = block.match(new RegExp(`^${prop}(?:;[^:]*)?:(.+)`, 'm'));
-      return m ? m[1].replace(/\\n/g, '\n').replace(/\\,/g, ',').trim() : '';
-    };
-    const parseICSDate = (str) => {
-      if (!str) return null;
-      const s = str.replace('Z', '');
-      const iso = s.length >= 15
-        ? s.replace(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})/, '$1-$2-$3T$4:$5:$6')
-        : s.replace(/(\d{4})(\d{2})(\d{2})/, '$1-$2-$3');
-      return new Date(iso);
-    };
-    const startDate = parseICSDate(get('DTSTART'));
-    const endDate   = parseICSDate(get('DTEND'));
-    if (!startDate || isNaN(startDate)) continue;
-    if (endDate && !isNaN(endDate) && endDate < new Date()) continue; // skip past events
-    events.push({
-      id:          get('UID') || String(Math.random()),
-      summary:     get('SUMMARY') || '(kein Titel)',
-      start:       { dateTime: startDate.toISOString() },
-      end:         { dateTime: (endDate && !isNaN(endDate) ? endDate : startDate).toISOString() },
-      description: get('DESCRIPTION'),
-      location:    get('LOCATION'),
-    });
-  }
-  return events.sort((a, b) => new Date(a.start.dateTime) - new Date(b.start.dateTime));
+async function gcalEnsureToken() {
+  if (isCalendarConfigured()) return localStorage.getItem(LS.GCAL_ACCESS_TOKEN);
+
+  const clientId = localStorage.getItem(LS.GCAL_CLIENT_ID);
+  if (!clientId) return null;
+  if (!window.google?.accounts?.oauth2) return null;
+
+  return new Promise((resolve) => {
+    gcalTokenResolve = resolve;
+    if (!gcalTokenClient) {
+      gcalTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/calendar.readonly',
+        callback: (resp) => {
+          if (resp.access_token) {
+            const expiry = Date.now() + (resp.expires_in || 3600) * 1000;
+            localStorage.setItem(LS.GCAL_ACCESS_TOKEN, resp.access_token);
+            localStorage.setItem(LS.GCAL_TOKEN_EXPIRY, String(expiry));
+            updateGCalStatus();
+          }
+          if (gcalTokenResolve) { gcalTokenResolve(resp.access_token || null); gcalTokenResolve = null; }
+        },
+        error_callback: () => {
+          if (gcalTokenResolve) { gcalTokenResolve(null); gcalTokenResolve = null; }
+        },
+      });
+    }
+    gcalTokenClient.requestAccessToken({ prompt: '' });
+  });
 }
 
-async function fetchCalendarICS() {
-  if (!state.calendarIcsUrl) return null;
-  // Direkt versuchen
+async function fetchCalendarAPI() {
+  const token = await gcalEnsureToken();
+  if (!token) return null;
+
+  const now    = new Date().toISOString();
+  const future = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString();
+
   try {
-    const res = await fetch(state.calendarIcsUrl);
-    if (res.ok) return parseICS(await res.text());
-  } catch { /* CORS-Fehler → Fallback */ }
-  // CORS-Proxy Fallback
-  try {
-    const proxyUrl = `https://corsproxy.io/?url=${encodeURIComponent(state.calendarIcsUrl)}`;
-    const res = await fetch(proxyUrl);
-    if (res.ok) return parseICS(await res.text());
-  } catch { /* ignore */ }
-  return null;
+    const res = await fetch(
+      `https://www.googleapis.com/calendar/v3/calendars/primary/events` +
+      `?timeMin=${encodeURIComponent(now)}&timeMax=${encodeURIComponent(future)}` +
+      `&singleEvents=true&orderBy=startTime&maxResults=50`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    if (res.status === 401) {
+      localStorage.removeItem(LS.GCAL_ACCESS_TOKEN);
+      localStorage.removeItem(LS.GCAL_TOKEN_EXPIRY);
+      updateGCalStatus();
+      return null;
+    }
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.items || [];
+  } catch { return null; }
 }
 
 function formatCalendarForPrompt(events) {
@@ -890,7 +917,7 @@ async function sendMessage() {
   // Fetch Google Calendar context if connected
   state.calendarContext = null;
   if (isCalendarConfigured()) {
-    const events = await fetchCalendarICS();
+    const events = await fetchCalendarAPI();
     if (events) state.calendarContext = formatCalendarForPrompt(events);
   }
 
@@ -1085,24 +1112,43 @@ function initEventListeners() {
   dom.btnCancelSettings.addEventListener('click', closeSettings);
   dom.btnSaveSettings.addEventListener('click', saveSettings);
 
-  // Google Calendar – ICS-URL speichern / entfernen
-  if (dom.btnGcalConnect) dom.btnGcalConnect.addEventListener('click', () => {
-    if (state.calendarIcsUrl) {
-      state.calendarIcsUrl = '';
-      localStorage.removeItem(LS.GCAL_ICS_URL);
-      updateGCalStatus();
-      showToast('Kalender-URL entfernt');
-    } else {
-      const url = document.getElementById('gcal-ics-url-input')?.value.trim();
-      if (!url || !url.includes('calendar.google.com')) {
-        showToast('Bitte eine gültige Google Kalender iCal-URL eingeben', 'error');
-        return;
-      }
-      state.calendarIcsUrl = url;
-      localStorage.setItem(LS.GCAL_ICS_URL, url);
+  // Google Calendar – OAuth verbinden
+  if (dom.btnGcalConnect) dom.btnGcalConnect.addEventListener('click', async () => {
+    const clientId = document.getElementById('gcal-client-id-input')?.value.trim();
+    if (!clientId || !clientId.includes('.apps.googleusercontent.com')) {
+      showToast('Bitte eine gültige Google Client ID eingeben', 'error');
+      return;
+    }
+    state.calendarClientId = clientId;
+    localStorage.setItem(LS.GCAL_CLIENT_ID, clientId);
+    gcalTokenClient = null; // Reset: neue Client-ID nutzen
+
+    const token = await gcalEnsureToken();
+    if (token) {
+      try {
+        const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo',
+          { headers: { Authorization: `Bearer ${token}` } });
+        if (r.ok) {
+          const info = await r.json();
+          if (info.email) localStorage.setItem(LS.GCAL_USER_EMAIL, info.email);
+        }
+      } catch { /* E-Mail optional */ }
       updateGCalStatus();
       showToast('Kalender verbunden ✅', 'success');
+    } else {
+      showToast('Verbindung fehlgeschlagen – Client ID korrekt?', 'error');
     }
+  });
+
+  // Google Calendar – trennen
+  const btnGcalDisconnect = document.getElementById('btn-gcal-disconnect');
+  if (btnGcalDisconnect) btnGcalDisconnect.addEventListener('click', () => {
+    localStorage.removeItem(LS.GCAL_ACCESS_TOKEN);
+    localStorage.removeItem(LS.GCAL_TOKEN_EXPIRY);
+    localStorage.removeItem(LS.GCAL_USER_EMAIL);
+    gcalTokenClient = null;
+    updateGCalStatus();
+    showToast('Kalender getrennt');
   });
 
   // Close modal on overlay click

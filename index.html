@@ -31,6 +31,9 @@
   <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
 
   <link rel="stylesheet" href="style.css" />
+
+  <!-- Google Identity Services für Calendar OAuth -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
   <div id="app">
@@ -283,28 +286,38 @@
 
         <!-- Google Calendar -->
         <div class="form-group">
-          <label class="form-label" for="gcal-ics-url-input">
+          <label class="form-label" for="gcal-client-id-input">
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
             </svg>
             Google Kalender
           </label>
-          <input
-            type="url"
-            class="form-input"
-            id="gcal-ics-url-input"
-            placeholder="https://calendar.google.com/calendar/ical/.../basic.ics"
-            autocomplete="off"
-            spellcheck="false"
-          />
           <div id="gcal-status"></div>
-          <button class="btn-secondary gcal-connect-btn" id="btn-gcal-connect" type="button">Speichern</button>
-          <span class="form-hint">
-            <strong>Einrichtung (einmalig):</strong> Google Kalender öffnen →
-            <a href="https://calendar.google.com/calendar/r/settings" target="_blank" rel="noopener" style="color:var(--text-link)">Einstellungen →</a>
-            deinen Kalender wählen → ganz unten <em>„Geheime Adresse im iCal-Format"</em> → URL kopieren → hier einfügen → Speichern.
-            Zum Erstellen von Terminen öffnet Garrett Google Kalender automatisch im neuen Tab.
-          </span>
+
+          <!-- Nicht verbunden: Client-ID-Eingabe + Connect-Button -->
+          <div id="gcal-setup">
+            <input
+              type="text"
+              class="form-input"
+              id="gcal-client-id-input"
+              placeholder="Google Client ID (xxx.apps.googleusercontent.com)"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button class="btn-secondary gcal-connect-btn" id="btn-gcal-connect" type="button">Mit Google verbinden</button>
+            <span class="form-hint">
+              <strong>Einmalige Einrichtung (~5 Min):</strong>
+              <a href="https://console.cloud.google.com" target="_blank" rel="noopener" style="color:var(--text-link)">Google Cloud Console</a>
+              → Neues Projekt → <em>Google Calendar API</em> aktivieren → Anmeldedaten →
+              <em>OAuth 2.0-Client-ID</em> (Typ: Webanwendung) → diese App-URL als
+              <em>„Autorisierter JavaScript-Ursprung"</em> eintragen → Client ID kopieren → hier einfügen → „Mit Google verbinden".
+            </span>
+          </div>
+
+          <!-- Verbunden: E-Mail-Anzeige + Trennen-Button -->
+          <div id="gcal-connected" style="display:none">
+            <button class="btn-secondary" id="btn-gcal-disconnect" type="button">Kalender trennen</button>
+          </div>
         </div>
       </div>
 
