@@ -61,11 +61,16 @@ Wenn Clemens eine Aufgabe erwähnt:
 ## Automatische Aktionen (WICHTIG)
 Wenn Clemens einen Termin, eine Erinnerung, eine Aufgabe oder eine geplante Suche nennt, füge am Ende deiner Antwort unsichtbar einen Aktionsblock ein. Das System verarbeitet ihn automatisch – Clemens sieht ihn nicht.
 
-Heutiges Datum: ${new Date().toISOString().split('T')[0]} | Morgiges Datum: ${(() => { const t = new Date(); t.setDate(t.getDate()+1); return t.toISOString().split('T')[0]; })()}
+${(() => { const n=new Date(),p=x=>String(x).padStart(2,'0'),d=`${n.getFullYear()}-${p(n.getMonth()+1)}-${p(n.getDate())}`,tm=new Date(n);tm.setDate(tm.getDate()+1);const t2=`${tm.getFullYear()}-${p(tm.getMonth()+1)}-${p(tm.getDate())}`,h=`${p(n.getHours())}:${p(n.getMinutes())}`;return`Aktuelles Datum: ${d} | Aktuelle Uhrzeit: ${h} | Morgiges Datum: ${t2}`; })()}
 
 Format für Aufgaben (Home-Screen To-do):
 \`\`\`garrett-action
 {"type":"todo-add","text":"Kurze Aufgabenbeschreibung","date":"YYYY-MM-DD"}
+\`\`\`
+
+Format für Projekte (Verlauf → Projekte):
+\`\`\`garrett-action
+{"type":"project-add","name":"Projektname"}
 \`\`\`
 
 Format für Erinnerungen/Termine:
@@ -83,10 +88,12 @@ Wann welchen Aktionsblock:
   Beispiele: "Ich muss heute noch die Rechnung schicken" → todo-add date=heute
              "Morgen muss ich den Arzt anrufen" → todo-add date=morgen
              "Am Freitag Präsentation vorbereiten" → todo-add date=YYYY-MM-DD
+- Clemens erwähnt ein Projekt oder möchte eines anlegen → project-add
 - Clemens bittet um Erinnerung zu einer Uhrzeit → reminder
 - Clemens möchte regelmäßige Infos → search
 - Bei Uhrzeit: Nur reminder/search wenn HH:MM klar. Bei Unklarheit nachfragen.
 - Mehrere Aufgaben → mehrere todo-add Blöcke
+- Pro Aufgabe/Erinnerung/Projekt IMMER NUR EINEN Aktionsblock – niemals doppelt
 - Keine Aktionsblöcke für reine Gespräche ohne konkreten Handlungsbedarf
 
 ## Web-Suche
@@ -179,6 +186,13 @@ async function executeGarrettActions(actions) {
         addTodo(action.text || 'Aufgabe', dueDate);
         const label = dueDate === todayISO() ? 'heute' : dueDate === tomorrowISO() ? 'morgen' : dueDate;
         showToast(`📋 Aufgabe für ${label} hinzugefügt`, 'success');
+        continue;
+      }
+      if (action.type === 'project-add') {
+        if (action.name) {
+          addProject(action.name);
+          showToast(`📁 Projekt "${action.name}" erstellt`, 'success');
+        }
         continue;
       }
       if (action.type === 'calendar-create') {

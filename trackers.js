@@ -579,6 +579,13 @@ function listenForSwMessages() {
 
 // ── Chat-based Tracker Creation ───────────────────────────────
 window.createTrackerFromChat = async function({ query, frequency, hour, minute = 0, targetDate = null, type = 'search' }) {
+  // Duplikat-Check: gleicher query-Text → nicht nochmals anlegen
+  const existing = await TrackerDB.getAll('trackers');
+  const duplicate = existing.find(t => t.query?.toLowerCase().trim() === query?.toLowerCase().trim());
+  if (duplicate) {
+    renderTrackerList();
+    return duplicate;
+  }
   const tracker = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
     name: query.length > 40 ? query.slice(0, 37) + '…' : query,
