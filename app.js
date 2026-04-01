@@ -817,6 +817,7 @@ function updateHeaderTitle() {
 
 // ── Render Chat List ─────────────────────────────────────────
 function renderChatList() {
+  if (!dom.chatList) return;
   dom.chatList.innerHTML = '';
   if (state.chats.length === 0) {
     dom.chatList.innerHTML = `<div style="padding:12px 10px;font-size:12px;color:var(--text-muted);text-align:center">Noch keine Chats</div>`;
@@ -1320,7 +1321,7 @@ function stopStreaming() {
 // ── Event Listeners ──────────────────────────────────────────
 function initEventListeners() {
   // New chat
-  dom.btnNewChat.addEventListener('click', () => { newChat(); switchTab('tab-chat'); });
+  if (dom.btnNewChat) dom.btnNewChat.addEventListener('click', () => { newChat(); switchTab('tab-chat'); });
 
   // Theme
   dom.btnThemeToggle.addEventListener('click', toggleTheme);
@@ -1528,7 +1529,7 @@ function initBottomNav() {
   if (navSettings) navSettings.addEventListener('click', openSettings);
 
   // When a chat item is clicked in Library, switch to Chat tab
-  dom.chatList.addEventListener('click', (e) => {
+  if (dom.chatList) dom.chatList.addEventListener('click', (e) => {
     if (e.target.closest('.chat-item')) {
       setTimeout(() => switchTab('tab-chat'), 80);
     }
