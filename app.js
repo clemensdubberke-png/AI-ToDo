@@ -68,16 +68,27 @@ Format für Aufgaben (Home-Screen To-do):
 {"type":"todo-add","text":"Kurze Aufgabenbeschreibung","date":"YYYY-MM-DD"}
 \`\`\`
 
-Format für Projekte anlegen (Verlauf → Projekte + automatisches Projektdokument unter Dokumente):
+## Projekte – Vor dem Anlegen IMMER befragen
+Bevor du ein neues Projekt anlegst, stelle IMMER folgende Fragen (sofern nicht bereits aus dem Gespräch bekannt):
+1. Was ist das genaue Ziel? (in einem Satz)
+2. Bis wann soll es fertig sein? (Deadline – PFLICHT als YYYY-MM-DD, ohne Deadline kein project-add)
+3. Was sind die 2–4 wichtigsten Meilensteine?
+4. Was könnte den Fortschritt blockieren?
+
+Erst wenn du alle 4 Punkte kennst – insbesondere die Deadline – sendest du den project-add Block.
+Eine Deadline ist PFLICHT. Falls der Nutzer keine nennt, frage explizit nach.
+Wenn ein Projekt bereits existiert → IMMER project-update verwenden, NIE erneut project-add für dasselbe Projekt.
+
+Format für Projekte anlegen (Verlauf → Projekte + automatisches Projektdokument + proaktiver Check-in Tracker):
 \`\`\`garrett-action
-{"type":"project-add","name":"Projektname","description":"Was das Projekt ist und bezweckt","milestones":[{"name":"Meilenstein 1","subgoals":["Teilziel A","Teilziel B"]},{"name":"Meilenstein 2","subgoals":["Teilziel C"]}]}
+{"type":"project-add","name":"Projektname","goal":"Kurzes Ziel in einem Satz","description":"Ausführliche Beschreibung","deadline":"YYYY-MM-DD","milestones":[{"name":"Meilenstein 1","subgoals":["Teilziel A","Teilziel B"]},{"name":"Meilenstein 2","subgoals":["Teilziel C"]}]}
 \`\`\`
 
-Format für Projekt-Updates (Fortschritt eintragen, Meilensteine/Teilziele abhaken):
+Format für Projekt-Updates (Dokument aktualisieren, Meilensteine/Teilziele abhaken, neue hinzufügen):
 \`\`\`garrett-action
-{"type":"project-update","name":"Projektname","notes":"Was sich geändert hat","completeMilestone":"Meilenstein 1","completeSubgoal":{"milestone":"Meilenstein 1","subgoal":"Teilziel A"}}
+{"type":"project-update","name":"Projektname","notes":"Was sich geändert hat","goal":"Aktualisiertes Ziel (optional)","description":"Neue Beschreibung (optional)","completeMilestone":"Meilenstein 1","completeSubgoal":{"milestone":"Meilenstein 1","subgoal":"Teilziel A"},"addMilestones":[{"name":"Neuer Meilenstein","subgoals":["Neues Teilziel"]}],"addSubgoals":{"milestone":"Bestehender Meilenstein","subgoals":["Neues Teilziel"]}}
 \`\`\`
-Hinweis project-update: "completeMilestone" und "completeSubgoal" sind optional – nur angeben wenn etwas wirklich abgeschlossen ist.
+Hinweis project-update: Alle Felder außer "name" sind optional – nur angeben was sich wirklich geändert hat oder abgeschlossen ist.
 
 Format für Erinnerungen/Termine:
 \`\`\`garrett-action
@@ -94,8 +105,8 @@ Wann welchen Aktionsblock:
   Beispiele: "Ich muss heute noch die Rechnung schicken" → todo-add date=heute
              "Morgen muss ich den Arzt anrufen" → todo-add date=morgen
              "Am Freitag Präsentation vorbereiten" → todo-add date=YYYY-MM-DD
-- Clemens erwähnt ein Projekt oder möchte eines anlegen → project-add mit Beschreibung + Meilensteinen
-- Clemens meldet Fortschritt zu einem Projekt → project-update mit notes + ggf. completeMilestone/completeSubgoal
+- Clemens erwähnt ein neues Projekt → erst Interview führen (Ziel, Deadline, Meilensteine, Blockaden), DANN project-add mit goal + deadline
+- Clemens erwähnt bestehendes Projekt oder meldet Fortschritt → IMMER project-update, niemals erneut project-add
 - Clemens bittet um Erinnerung zu einer Uhrzeit → reminder
 - Clemens möchte regelmäßige Infos → search
 - Bei Uhrzeit: Nur reminder/search wenn HH:MM klar. Bei Unklarheit nachfragen.
@@ -209,7 +220,7 @@ function createProjectDocument(project) {
     const sgs = (m.subgoals || []).map(sg => `  - [ ] ${sg.name}`).join('\n');
     return `- [ ] ${m.name}${sgs ? '\n' + sgs : ''}`;
   }).join('\n');
-  const content = `# Projekt: ${project.name}\n\n**Erstellt:** ${today}\n**Status:** In Bearbeitung (0%)\n\n## Beschreibung\n${project.description || 'Keine Beschreibung angegeben.'}\n\n## Meilensteine & Ziele\n${msLines || '(Noch keine Meilensteine definiert)'}\n\n## Updates & Notizen\n- ${today}: Projekt erstellt`;
+  const content = `# Projekt: ${project.name}\n\n**Ziel:** ${project.goal || 'Noch nicht definiert'}\n**Deadline:** ${project.deadline || 'Keine Deadline gesetzt'}\n**Erstellt:** ${today}\n**Status:** In Bearbeitung (0%)\n\n## Beschreibung\n${project.description || 'Keine Beschreibung angegeben.'}\n\n## Meilensteine & Ziele\n${msLines || '(Noch keine Meilensteine definiert)'}\n\n## Updates & Notizen\n- ${today}: Projekt erstellt`;
   const docs = loadDocuments();
   const doc = { id: generateId(), title: `📁 ${project.name}`, content, createdAt: new Date().toISOString(), projectId: project.id };
   docs.unshift(doc);
@@ -217,7 +228,7 @@ function createProjectDocument(project) {
   return doc.id;
 }
 
-function updateProjectDocument(projectId, noteText) {
+function updateProjectDocument(projectId, noteText, updatedFields = {}) {
   const projects = loadProjects();
   const project = projects.find(p => p.id === projectId);
   if (!project || !project.documentId) return;
@@ -227,6 +238,22 @@ function updateProjectDocument(projectId, noteText) {
   const pct = calculateProjectProgress(project);
   const statusLabel = pct >= 100 ? 'Abgeschlossen' : 'In Bearbeitung';
   doc.content = doc.content.replace(/\*\*Status:\*\*[^\n]*/, `**Status:** ${statusLabel} (${pct}%)`);
+  // Update goal line if changed
+  if (updatedFields.goal !== undefined) {
+    doc.content = doc.content.replace(/\*\*Ziel:\*\*[^\n]*/, `**Ziel:** ${updatedFields.goal || 'Noch nicht definiert'}`);
+  }
+  // Update deadline line if changed
+  if (updatedFields.deadline !== undefined) {
+    doc.content = doc.content.replace(/\*\*Deadline:\*\*[^\n]*/, `**Deadline:** ${updatedFields.deadline || 'Keine Deadline gesetzt'}`);
+  }
+  // Update description section if changed
+  if (updatedFields.description !== undefined) {
+    doc.content = doc.content.replace(
+      /(## Beschreibung\n)([\s\S]*?)(\n## )/,
+      `$1${updatedFields.description || 'Keine Beschreibung angegeben.'}\n$3`
+    );
+  }
+  // Rebuild milestones section
   const ms = project.milestones || [];
   if (ms.length > 0) {
     const msLines = ms.map(m => {
@@ -309,18 +336,44 @@ async function executeGarrettActions(actions) {
       }
       if (action.type === 'project-add') {
         if (action.name) {
-          const milestones = (action.milestones || []).map(m => ({
-            id: generateId(),
-            name: typeof m === 'string' ? m : m.name,
-            completed: false,
-            subgoals: (typeof m === 'object' && Array.isArray(m.subgoals) ? m.subgoals : []).map(sg => ({
+          const existingProjects = loadProjects();
+          const existingProject = existingProjects.find(p => p.name.toLowerCase() === action.name.toLowerCase());
+          if (existingProject) {
+            // Merge into existing project instead of creating a duplicate
+            let changed = false;
+            const updatedFields = {};
+            if (action.goal && action.goal !== existingProject.goal) { existingProject.goal = action.goal; updatedFields.goal = action.goal; changed = true; }
+            if (action.description && action.description !== existingProject.description) { existingProject.description = action.description; updatedFields.description = action.description; changed = true; }
+            if (action.deadline && action.deadline !== existingProject.deadline) { existingProject.deadline = action.deadline; updatedFields.deadline = action.deadline; changed = true; }
+            if (changed) { saveProjects(existingProjects); renderProjects(); renderLibProjects(); }
+            if (existingProject.documentId) updateProjectDocument(existingProject.id, action.notes || null, updatedFields);
+            showToast(`📁 Projekt "${action.name}" aktualisiert`, 'success');
+          } else {
+            const milestones = (action.milestones || []).map(m => ({
               id: generateId(),
-              name: typeof sg === 'string' ? sg : sg.name,
+              name: typeof m === 'string' ? m : m.name,
               completed: false,
-            })),
-          }));
-          addProject(action.name, action.description || '', milestones);
-          showToast(`📁 Projekt "${action.name}" erstellt`, 'success');
+              subgoals: (typeof m === 'object' && Array.isArray(m.subgoals) ? m.subgoals : []).map(sg => ({
+                id: generateId(),
+                name: typeof sg === 'string' ? sg : sg.name,
+                completed: false,
+              })),
+            }));
+            const newProject = addProject(action.name, action.goal || '', action.description || '', milestones, action.deadline || null);
+            showToast(`📁 Projekt "${action.name}" erstellt`, 'success');
+            // Auto-create check-in tracker if deadline is set
+            if (action.deadline && typeof window.createTrackerFromChat === 'function') {
+              const daysLeft = Math.ceil((new Date(action.deadline) - new Date()) / 86400000);
+              const frequency = daysLeft > 14 ? 'weekly' : 'daily';
+              await window.createTrackerFromChat({
+                query: `Projektstand-Check: "${action.name}" – Deadline: ${action.deadline}. Frage Clemens wie es läuft, was erledigt wurde und was als nächstes ansteht.`,
+                frequency,
+                hour: 9, minute: 0,
+                targetDate: null,
+                type: 'reminder',
+              });
+            }
+          }
         }
         continue;
       }
@@ -329,10 +382,17 @@ async function executeGarrettActions(actions) {
         const project = projects.find(p => p.name.toLowerCase() === (action.name || '').toLowerCase() || p.id === action.projectId);
         if (!project) continue;
         let changed = false;
+        const updatedFields = {};
+        // Update scalar fields
+        if (action.goal !== undefined && action.goal !== project.goal) { project.goal = action.goal; updatedFields.goal = action.goal; changed = true; }
+        if (action.description !== undefined && action.description !== project.description) { project.description = action.description; updatedFields.description = action.description; changed = true; }
+        if (action.deadline !== undefined && action.deadline !== project.deadline) { project.deadline = action.deadline; updatedFields.deadline = action.deadline; changed = true; }
+        // Complete milestone
         if (action.completeMilestone) {
           const ms = (project.milestones || []).find(m => m.name.toLowerCase() === action.completeMilestone.toLowerCase());
           if (ms) { ms.completed = true; (ms.subgoals || []).forEach(sg => { sg.completed = true; }); changed = true; }
         }
+        // Complete subgoal
         if (action.completeSubgoal) {
           const { milestone: msName, subgoal: sgName } = action.completeSubgoal;
           const ms = (project.milestones || []).find(m => m.name.toLowerCase() === (msName || '').toLowerCase());
@@ -342,11 +402,34 @@ async function executeGarrettActions(actions) {
             if ((ms.subgoals || []).every(sg => sg.completed)) ms.completed = true;
           }
         }
+        // Add new milestones
+        if (Array.isArray(action.addMilestones) && action.addMilestones.length > 0) {
+          if (!project.milestones) project.milestones = [];
+          action.addMilestones.forEach(m => {
+            project.milestones.push({
+              id: generateId(),
+              name: typeof m === 'string' ? m : m.name,
+              completed: false,
+              subgoals: (typeof m === 'object' && Array.isArray(m.subgoals) ? m.subgoals : []).map(sg => ({ id: generateId(), name: typeof sg === 'string' ? sg : sg.name, completed: false })),
+            });
+          });
+          changed = true;
+        }
+        // Add subgoals to existing milestone
+        if (action.addSubgoals) {
+          const { milestone: msName, subgoals: newSgs } = action.addSubgoals;
+          const ms = (project.milestones || []).find(m => m.name.toLowerCase() === (msName || '').toLowerCase());
+          if (ms && Array.isArray(newSgs)) {
+            if (!ms.subgoals) ms.subgoals = [];
+            newSgs.forEach(sg => ms.subgoals.push({ id: generateId(), name: typeof sg === 'string' ? sg : sg.name, completed: false }));
+            changed = true;
+          }
+        }
         if (changed) saveProjects(projects);
         renderProjects();
         renderLibProjects();
         const pct = calculateProjectProgress(project);
-        if (project.documentId) updateProjectDocument(project.id, action.notes || `Projektstand aktualisiert (${pct}%)`);
+        if (project.documentId) updateProjectDocument(project.id, action.notes || null, updatedFields);
         showToast(`📁 "${project.name}" aktualisiert (${pct}%)`, 'success');
         continue;
       }
@@ -1700,15 +1783,19 @@ function renderProjects() {
 
   list.innerHTML = projects.map(p => {
     const pct = calculateProjectProgress(p);
+    const goalHtml = p.goal ? `<div style="font-size:12px;color:var(--text-muted);margin:2px 0 4px;line-height:1.3">🎯 ${escapeHtml(p.goal)}</div>` : '';
+    const deadlineHtml = p.deadline ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">📅 ${escapeHtml(p.deadline)}</div>` : '';
     return `
       <div class="project-card" data-id="${p.id}">
         <div class="project-card-header">
           <span class="project-name">${escapeHtml(p.name)}</span>
           <span class="project-stats">${pct}%</span>
         </div>
+        ${goalHtml}
         <div class="project-progress-track">
           <div class="project-progress-fill" style="width:${pct}%"></div>
         </div>
+        ${deadlineHtml}
       </div>
     `;
   }).join('');
@@ -1718,15 +1805,16 @@ function renderProjects() {
   });
 }
 
-function addProject(name, description = '', milestones = []) {
+function addProject(name, goal = '', description = '', milestones = [], deadline = null) {
   if (!name.trim()) return;
   const projects = loadProjects();
-  const project = { id: generateId(), name: name.trim(), description, milestones, tasks: [], createdAt: todayISO(), documentId: null };
+  const project = { id: generateId(), name: name.trim(), goal, description, deadline, milestones, tasks: [], createdAt: todayISO(), documentId: null };
   project.documentId = createProjectDocument(project);
   projects.push(project);
   saveProjects(projects);
   renderProjects();
   renderLibProjects();
+  return project;
 }
 
 function initProjectAdd() {
@@ -1774,13 +1862,17 @@ function renderProjectModal(projectId) {
   const pct = calculateProjectProgress(p);
   const ms  = p.milestones || [];
 
+  const goalLine    = p.goal     ? `<div style="font-size:13px;margin:6px 0 2px">🎯 <strong>Ziel:</strong> ${escapeHtml(p.goal)}</div>` : '';
+  const deadlineLine = p.deadline ? `<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">📅 <strong>Deadline:</strong> ${escapeHtml(p.deadline)}</div>` : '';
+
   let contentHtml = `
     <div class="project-progress-info">
       <span style="font-size:13px;color:var(--text-muted)">${pct}% abgeschlossen</span>
       <div class="project-progress-track" style="margin:6px 0">
         <div class="project-progress-fill" style="width:${pct}%"></div>
       </div>
-    </div>`;
+    </div>
+    ${goalLine}${deadlineLine}`;
 
   if (ms.length > 0) {
     contentHtml += `<div class="milestone-list">${ms.map(m => {
@@ -2083,14 +2175,18 @@ function renderLibProjects() {
     const ms  = p.milestones || [];
     const openMs = ms.filter(m => !m.completed).length;
     const statsLabel = ms.length > 0 ? `${pct}% · ${openMs}/${ms.length} Meilensteine` : `${pct}%`;
+    const goalHtml = p.goal ? `<div style="font-size:12px;color:var(--text-muted);margin:2px 0 4px;line-height:1.3">🎯 ${escapeHtml(p.goal)}</div>` : '';
+    const deadlineHtml = p.deadline ? `<div style="font-size:11px;color:var(--text-muted);margin-top:4px">📅 ${escapeHtml(p.deadline)}</div>` : '';
     return `<div class="project-card" data-id="${p.id}">
       <div class="project-card-header">
         <span class="project-name">${escapeHtml(p.name)}</span>
         <span class="project-stats">${statsLabel}</span>
       </div>
+      ${goalHtml}
       <div class="project-progress-track">
         <div class="project-progress-fill" style="width:${pct}%"></div>
       </div>
+      ${deadlineHtml}
     </div>`;
   }).join('');
   list.querySelectorAll('.project-card').forEach(card => {
